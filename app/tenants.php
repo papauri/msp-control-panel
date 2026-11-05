@@ -1,0 +1,85 @@
+<?php
+// Tenant helpers shared by the dashboard, tenant page and licence endpoint.
+
+function tenant_find(PDO $pdo, int $id, bool $forUpdate = false): ?array
+{
+    $st = $pdo->prepare('SELECT * FROM tenants WHERE id = ?' . ($forUpdate ? ' FOR UPDATE' : ''));
+    $st->execute([$id]);
+    $r = $st->fetch();
+    return $r ?: null;
+}
+
+function tenant_valid_date(string $d): bool
+{
+    if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $d, $m)) {
+        return false;
+    }
+    return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) && (int)$m[1] >= 2000 && (int)$m[1] <= 2100;
+}
+
+// 256-bit random key. Returned once to the owner; only a hash is stored.
+function tenant_new_api_key(): string
+{
+    return 'mspk_' . bin2hex(random_bytes(32));
+}
+
+// Returns [array $errors, array $clean]. $isNew allows setting the slug.
+function tenant_validate(array $in, bool $isNew): array
+{
+    $err = [];
+    $s = function ($k, $max) use ($in) {
+        $v = isset($in[$k]) && is_string($in[$k]) ? trim($in[$k]) : '';
+        return mb_substr($v, 0, $max);
+    };
+    $clean = [
+        'slug' => strtolower($s('slug', 64)),
+        'name' => $s('name', 190),
+        'domain' => licence_normalise_domain($s('domain', 255)),
+        'plan' => $s('plan', 60),
+        'currency' => strtoupper($s('currency', 3)),
+        'paid_until' => $s('paid_until', 10),
+        'notes' => $s('notes', 2000),
+    ];
+    if ($isNew && !preg_match('/^[a-z0-9][a-z0-9-]{1,62}$/', $clean['slug'])) {
+        $err[] = 'Short name must be 2-63 characters: lowercase letters, numbers and hyphens.';
+    }
+    if ($clean['name'] === '') {
+        $err[] = 'Hotel name is required.';
+    }
+    if (!licence_domain_valid($clean['domain'])) {
+        $err[] = 'Enter the hotel website domain, for example hotel.example.com.';
+    }
+    if (!preg_match('/^[A-Z]{3}$/', $clean['currency'])) {
+        $err[] = 'Currency must be a 3-letter code such as MWK.';
+    }
+    if (!tenant_valid_date($clean['paid_until'])) {
+        $err[] = 'Paid until must be a valid date (YYYY-MM-DD).';
+    }
+    $fee = isset($in['monthly_fee']) && is_string($in['monthly_fee']) ? trim($in['monthly_fee']) : '';
+    if (!preg_match('/^\d{1,9}(\.\d{1,2})?$/', $fee)) {
+        $err[] = 'Monthly fee must be a number, for example 150000 or 150000.50.';
+    }
+    $clean['monthly_fee'] = $fee === '' ? '0' : $fee;
+    foreach (['grace_days' => 'Grace days', 'readonly_days' => 'Read-only days'] as $k => $label) {
+        $v = isset($in[$k]) && is_string($in[$k]) ? trim($in[$k]) : '';
+        if (!preg_match('/^\d{1,3}$/', $v) || (int)$v > 365) {
+            $err[] = $label . ' must be a whole number from 0 to 365.';
+            $clean[$k] = 0;
+        } else {
+            $clean[$k] = (int)$v;
+        }
+    }
+    return [$err, $clean];
+}
+
+function flash_set(string $type, string $msg): void
+{
+    $_SESSION['flash'][] = [$type, $msg];
+}
+
+function flash_take(): array
+{
+    $f = $_SESSION['flash'] ?? [];
+    unset($_SESSION['flash']);
+    return $f;
+}

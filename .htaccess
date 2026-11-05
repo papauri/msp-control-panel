@@ -1,0 +1,3 @@
+# Defence in depth: if the document root is ever set to this folder instead of public/,
+# nothing here is served. The real web root is public/ (see README).
+Require all denied

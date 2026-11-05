@@ -1,0 +1,7 @@
+Options -Indexes
+# Apache also reads the project-root .htaccess (Require all denied) above this folder;
+# this re-opens public/ only. Dot-files stay denied below.
+Require all granted
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
