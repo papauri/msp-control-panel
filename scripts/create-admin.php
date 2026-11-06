@@ -41,7 +41,7 @@ if ($pw !== $pw2 || strlen($pw) < 12) {
 $pdo = db();
 $secret = totp_generate_secret();
 try {
-    $st = $pdo->prepare('INSERT INTO admins (email, password_hash, totp_secret) VALUES (?, ?, ?)');
+    $st = $pdo->prepare('INSERT INTO cp_admins (email, password_hash, totp_secret) VALUES (?, ?, ?)');
     $st->execute([$email, password_hash($pw, PASSWORD_BCRYPT, ['cost' => 10]), $secret]);
 } catch (PDOException $e) {
     fwrite(STDERR, ($e->getCode() === '23000' ? "That email already exists.\n" : "Database error; nothing was created.\n"));

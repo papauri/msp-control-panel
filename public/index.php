@@ -7,13 +7,13 @@ $today = status_today();
 
 $rows = $pdo->query(
     'SELECT t.*,
-        (SELECT c.checked_at FROM licence_checks c WHERE c.tenant_id = t.id
+        (SELECT c.checked_at FROM cp_licence_checks c WHERE c.tenant_id = t.id
            AND c.result_status IN (\'active\', \'grace\', \'read_only\', \'suspended\')
            ORDER BY c.checked_at DESC LIMIT 1) AS last_check,
-        (SELECT c.pms_version FROM licence_checks c WHERE c.tenant_id = t.id
+        (SELECT c.pms_version FROM cp_licence_checks c WHERE c.tenant_id = t.id
            AND c.result_status IN (\'active\', \'grace\', \'read_only\', \'suspended\')
            ORDER BY c.checked_at DESC LIMIT 1) AS last_version
-     FROM tenants t ORDER BY t.name'
+     FROM cp_tenants t ORDER BY t.name'
 )->fetchAll();
 
 view_head('Hotels');

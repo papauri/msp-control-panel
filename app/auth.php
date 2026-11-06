@@ -70,7 +70,7 @@ function auth_attempt(PDO $pdo, string $email, string $password, string $code): 
     $st = $pdo->prepare(
         'SELECT id, email, password_hash, totp_secret,
                 (locked_until IS NOT NULL AND locked_until > NOW()) AS is_locked
-         FROM admins WHERE email = ?'
+         FROM cp_admins WHERE email = ?'
     );
     $st->execute([$email]);
     $admin = $st->fetch();
@@ -81,7 +81,7 @@ function auth_attempt(PDO $pdo, string $email, string $password, string $code): 
     if ($admin && !(int)$admin['is_locked'] && $pwOk && $step !== false) {
         // Single-use codes: the step must be newer than the last one accepted.
         $up = $pdo->prepare(
-            'UPDATE admins SET totp_last_step = ?, failed_count = 0, locked_until = NULL, last_login_at = NOW()
+            'UPDATE cp_admins SET totp_last_step = ?, failed_count = 0, locked_until = NULL, last_login_at = NOW()
              WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)'
         );
         $up->execute([$step, (int)$admin['id'], $step]);
@@ -99,7 +99,7 @@ function auth_attempt(PDO $pdo, string $email, string $password, string $code): 
     if ($admin && !(int)$admin['is_locked']) {
         // locked_until is assigned first: MySQL evaluates SET left to right.
         $f = $pdo->prepare(
-            'UPDATE admins
+            'UPDATE cp_admins
              SET locked_until = IF(failed_count + 1 >= ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), locked_until),
                  failed_count = IF(failed_count + 1 >= ?, 0, failed_count + 1)
              WHERE id = ?'
@@ -124,7 +124,7 @@ function auth_current(PDO $pdo): ?array
         session_boot();
         return null;
     }
-    $st = $pdo->prepare('SELECT id, email FROM admins WHERE id = ?');
+    $st = $pdo->prepare('SELECT id, email FROM cp_admins WHERE id = ?');
     $st->execute([(int)$_SESSION['admin_id']]);
     $admin = $st->fetch();
     if (!$admin) {

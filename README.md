@@ -6,7 +6,7 @@ Private panel for recording who has paid for the hotel PMS. Each PMS calls `api/
 
 1. Upload the whole folder to, for example, `/home/USER/msp-control-panel/` (not inside public_html).
 2. Create a subdomain (for example `licence.yourdomain.com`) and set its **document root to `/home/USER/msp-control-panel/public`**. Only `public/` is web-visible; `app/`, `keys/`, `.env`, `logs/`, `storage/` must stay above it. Enable the free AutoSSL certificate and use HTTPS only.
-3. Create a MySQL database and user in cPanel. Copy `.env.example` to `.env`, fill in `DB_*`, `APP_URL`. `chmod 600 .env`.
+3. Create a MySQL database and user in cPanel (or, temporarily, share another database: all panel tables are prefixed `cp_` so they cannot clash; `php scripts/export-db.php` writes an offline export to the git-ignored `database/` folder for the later move, see `database/README.txt` locally). Copy `.env.example` to `.env`, fill in `DB_*`, `APP_URL`. `chmod 600 .env`.
 4. Run migrations (SSH or cPanel Terminal): `php scripts/migrate.php`. (Or paste `migrations/001_schema.sql` into phpMyAdmin.)
 5. Make the signing key: `php scripts/make-keys.php`. It writes `keys/licence-private.pem` (chmod 600, outside `public/`) and prints the **public key**. Put the absolute path in `.env` as `PRIVATE_KEY_PATH`. Back the private key up offline. If it is lost, every PMS must be given a new public key.
 6. Create your login: `php scripts/create-admin.php you@example.com`. Add the printed TOTP secret to an authenticator app (manual entry). There is no web sign-up.

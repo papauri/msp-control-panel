@@ -26,7 +26,7 @@ function licence_log(PDO $pdo, ?int $tenantId, string $domain, string $version, 
 {
     try {
         $st = $pdo->prepare(
-            'INSERT INTO licence_checks (tenant_id, ip, domain_reported, pms_version, result_status) VALUES (?, ?, ?, ?, ?)'
+            'INSERT INTO cp_licence_checks (tenant_id, ip, domain_reported, pms_version, result_status) VALUES (?, ?, ?, ?, ?)'
         );
         $st->execute([$tenantId, client_ip(), substr($domain, 0, 255), substr($version, 0, 40), substr($result, 0, 20)]);
     } catch (Throwable $e) {
@@ -85,7 +85,7 @@ if (!rate_limit_hit($pdo, 'lic-ip:' . client_ip(), 30, 3600)) {
     licence_reply(429, ['error' => 'rate_limited']);
 }
 
-$st = $pdo->prepare('SELECT * FROM tenants WHERE slug = ?');
+$st = $pdo->prepare('SELECT * FROM cp_tenants WHERE slug = ?');
 $st->execute([strtolower($slug)]);
 $tenant = $st->fetch();
 

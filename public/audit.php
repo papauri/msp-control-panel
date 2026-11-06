@@ -10,9 +10,9 @@ $offset = ($page - 1) * $perPage;
 
 $st = $pdo->prepare(
     'SELECT a.*, ad.email AS admin_email, t.slug AS tenant_slug
-     FROM audit_log a
-     LEFT JOIN admins ad ON ad.id = a.admin_id
-     LEFT JOIN tenants t ON t.id = a.tenant_id
+     FROM cp_audit_log a
+     LEFT JOIN cp_admins ad ON ad.id = a.admin_id
+     LEFT JOIN cp_tenants t ON t.id = a.tenant_id
      ORDER BY a.id DESC LIMIT ' . (int)$perPage . ' OFFSET ' . (int)$offset
 );
 $st->execute();

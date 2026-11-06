@@ -3,3 +3,6 @@ keys/
 *.pem
 logs/
 storage/
+
+# Offline database exports (hold hashes and secrets)
+database/

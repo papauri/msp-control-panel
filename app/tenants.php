@@ -3,7 +3,7 @@
 
 function tenant_find(PDO $pdo, int $id, bool $forUpdate = false): ?array
 {
-    $st = $pdo->prepare('SELECT * FROM tenants WHERE id = ?' . ($forUpdate ? ' FOR UPDATE' : ''));
+    $st = $pdo->prepare('SELECT * FROM cp_tenants WHERE id = ?' . ($forUpdate ? ' FOR UPDATE' : ''));
     $st->execute([$id]);
     $r = $st->fetch();
     return $r ?: null;

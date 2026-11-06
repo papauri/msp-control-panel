@@ -1,6 +1,6 @@
 -- MSP control panel schema. Safe to re-run (IF NOT EXISTS only; nothing is dropped).
 
-CREATE TABLE IF NOT EXISTS admins (
+CREATE TABLE IF NOT EXISTS cp_admins (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   email VARCHAR(190) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS admins (
   UNIQUE KEY uq_admins_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS tenants (
+CREATE TABLE IF NOT EXISTS cp_tenants (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   slug VARCHAR(64) NOT NULL,
   name VARCHAR(190) NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS tenants (
   UNIQUE KEY uq_tenants_slug (slug)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS payments (
+CREATE TABLE IF NOT EXISTS cp_payments (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   tenant_id INT UNSIGNED NOT NULL,
   admin_id INT UNSIGNED NULL,
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS payments (
   KEY idx_payments_tenant (tenant_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS licence_checks (
+CREATE TABLE IF NOT EXISTS cp_licence_checks (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   tenant_id INT UNSIGNED NULL,
   ip VARCHAR(45) NOT NULL,
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS licence_checks (
   KEY idx_checks_tenant_time (tenant_id, checked_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS audit_log (
+CREATE TABLE IF NOT EXISTS cp_audit_log (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   admin_id INT UNSIGNED NULL,
   action VARCHAR(60) NOT NULL,
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   KEY idx_audit_tenant (tenant_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS rate_limits (
+CREATE TABLE IF NOT EXISTS cp_rate_limits (
   bucket VARCHAR(100) NOT NULL,
   window_start INT UNSIGNED NOT NULL,
   hits INT UNSIGNED NOT NULL DEFAULT 0,

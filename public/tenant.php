@@ -31,7 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($postId === 0) {
                     $key = tenant_new_api_key();
                     $st = $pdo->prepare(
-                        'INSERT INTO tenants (slug, name, domain, plan, monthly_fee, currency, paid_until, grace_days, readonly_days, api_key_hash, notes)
+                        'INSERT INTO cp_tenants (slug, name, domain, plan, monthly_fee, currency, paid_until, grace_days, readonly_days, api_key_hash, notes)
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                     );
                     $st->execute([
@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     back_to(0);
                 }
                 $st = $pdo->prepare(
-                    'UPDATE tenants SET name=?, domain=?, plan=?, monthly_fee=?, currency=?, paid_until=?,
+                    'UPDATE cp_tenants SET name=?, domain=?, plan=?, monthly_fee=?, currency=?, paid_until=?,
                         grace_days=?, readonly_days=?, notes=? WHERE id=?'
                 );
                 $st->execute([
@@ -86,9 +86,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $base = max($today, $before['paid_until']);
                 $newDate = status_add_months($base, $months);
-                $pdo->prepare('UPDATE tenants SET paid_until = ? WHERE id = ?')->execute([$newDate, $postId]);
+                $pdo->prepare('UPDATE cp_tenants SET paid_until = ? WHERE id = ?')->execute([$newDate, $postId]);
                 $pdo->prepare(
-                    'INSERT INTO payments (tenant_id, admin_id, amount, currency, months, reference, paid_until_before, paid_until_after)
+                    'INSERT INTO cp_payments (tenant_id, admin_id, amount, currency, months, reference, paid_until_before, paid_until_after)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
                 )->execute([$postId, $adminId, $amount, $before['currency'], $months, $ref, $before['paid_until'], $newDate]);
                 $after = tenant_find($pdo, $postId);
@@ -114,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $pdo->rollBack();
                     back_to(0);
                 }
-                $pdo->prepare('UPDATE tenants SET status_override = ?, override_reason = ? WHERE id = ?')
+                $pdo->prepare('UPDATE cp_tenants SET status_override = ?, override_reason = ? WHERE id = ?')
                     ->execute([$ov, $reason, $postId]);
                 audit_log($pdo, $adminId, 'override_set', $postId, $before, tenant_find($pdo, $postId));
                 $pdo->commit();
@@ -132,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $pdo->rollBack();
                     back_to(0);
                 }
-                $pdo->prepare('UPDATE tenants SET status_override = NULL, override_reason = NULL WHERE id = ?')->execute([$postId]);
+                $pdo->prepare('UPDATE cp_tenants SET status_override = NULL, override_reason = NULL WHERE id = ?')->execute([$postId]);
                 $after = tenant_find($pdo, $postId);
                 $after['_reason'] = $reason;
                 audit_log($pdo, $adminId, 'override_cleared', $postId, $before, $after);
@@ -148,7 +148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 back_to(0);
             }
             $key = tenant_new_api_key();
-            $pdo->prepare('UPDATE tenants SET api_key_hash = ? WHERE id = ?')
+            $pdo->prepare('UPDATE cp_tenants SET api_key_hash = ? WHERE id = ?')
                 ->execute([password_hash($key, PASSWORD_BCRYPT, ['cost' => 10]), $postId]);
             audit_log($pdo, $adminId, 'api_key_regenerated', $postId, ['key_set' => $before['api_key_hash'] !== null], ['key_set' => true]);
             $pdo->commit();
@@ -291,7 +291,7 @@ if ($tenant) {
         . '<input type="hidden" name="action" value="regen_key"><input type="hidden" name="id" value="' . (int)$tenant['id'] . '">'
         . '<button type="submit" class="danger">Generate new API key</button></form></section>';
 
-    $pay = $pdo->prepare('SELECT * FROM payments WHERE tenant_id = ? ORDER BY id DESC LIMIT 10');
+    $pay = $pdo->prepare('SELECT * FROM cp_payments WHERE tenant_id = ? ORDER BY id DESC LIMIT 10');
     $pay->execute([(int)$tenant['id']]);
     $payments = $pay->fetchAll();
     echo '<section class="card"><h2>Recent payments</h2>';
@@ -316,7 +316,7 @@ if ($tenant) {
     }
     echo '</section>';
 
-    $ck = $pdo->prepare('SELECT * FROM licence_checks WHERE tenant_id = ? ORDER BY id DESC LIMIT 25');
+    $ck = $pdo->prepare('SELECT * FROM cp_licence_checks WHERE tenant_id = ? ORDER BY id DESC LIMIT 25');
     $ck->execute([(int)$tenant['id']]);
     $checks = $ck->fetchAll();
     echo '<section class="card"><h2>Recent check-ins</h2>';
