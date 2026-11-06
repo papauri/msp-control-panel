@@ -173,5 +173,63 @@ view_head('Guide');
     <li>Back up the private key: download it once with cPanel File Manager from the path shown, and keep it offline. Never email it.</li>
 </ol>
 <p>Until a key exists, every check-in is answered with "unavailable" and nothing changes at the businesses.</p>
+
+<h2 id="emergency">12. If something goes wrong (no programmer needed)</h2>
+<p>Everything below is done in <strong>cPanel</strong> only. The same steps are in the file <strong>EMERGENCY.md</strong> in the panel's GitHub repository, so you can still read them if this panel does not open.</p>
+
+<h3>First: nobody is locked out straight away</h3>
+<ul>
+    <li>If this panel stops working, every business keeps using the last answer it got. Nothing changes for <strong>35 days</strong>.</li>
+    <li>After that, each business follows its own <strong>Paid until</strong> date. A business that has paid ahead keeps working.</li>
+    <li>So you have weeks, not minutes. Do not rush.</li>
+</ul>
+
+<h3>A. Switch the licence OFF for one business (about 1 minute)</h3>
+<p>Use this if a business is paused by mistake, has paid but you cannot record it, or this panel is down for a long time.</p>
+<ol>
+    <li>Log in to <strong>cPanel</strong> and open <strong>File Manager</strong>.</li>
+    <li>Click <strong>Settings</strong> (top right), tick <strong>Show Hidden Files (dotfiles)</strong>, click <strong>Save</strong>.</li>
+    <li>Open that business's website folder. (Not sure which? cPanel &rarr; <strong>Git Version Control</strong> shows it as the <em>Repository Path</em>.)</li>
+    <li>Right-click the file <strong>.env</strong> &rarr; <strong>Edit</strong> &rarr; <strong>Edit</strong> again.</li>
+    <li>Find the line that starts with <code>LICENCE_TENANT=</code>.</li>
+    <li>Type a <code>#</code> at the very start of that line, so it reads <code>#LICENCE_TENANT=...</code></li>
+    <li>Click <strong>Save Changes</strong>.</li>
+</ol>
+<p>That's it. The business works normally straight away: no banner, no locks, no checks. Its data is not touched.</p>
+<p><strong>To switch it back ON later:</strong> do the same steps and delete the <code>#</code>. Then open this panel and check the business shows the right status.</p>
+<p><strong>All businesses?</strong> Do step A for each one.</p>
+
+<h3>B. This panel shows an error or a blank page</h3>
+<ol>
+    <li>cPanel &rarr; <strong>Git Version Control</strong> &rarr; <strong>Manage</strong> next to <em>msp-control-panel</em> &rarr; <strong>Pull or Deploy</strong> tab &rarr; <strong>Update from Remote</strong>. Try the panel again.</li>
+    <li>Still broken? cPanel &rarr; <strong>File Manager</strong> (hidden files shown) &rarr; open the <em>msp-control-panel</em> folder. Check these are there:
+        <ul>
+            <li><strong>.env</strong> (the settings file). If it is missing, upload your saved copy.</li>
+            <li><strong>keys/licence-private.pem</strong> (the signing key). If it is missing, upload your offline backup into the <em>keys</em> folder. <strong>Do not</strong> click "Create signing key" again: a new key would not match the businesses.</li>
+        </ul>
+    </li>
+    <li>Page says it cannot reach the database? See C.</li>
+</ol>
+
+<h3>C. The panel's records are lost (database)</h3>
+<ol>
+    <li>cPanel &rarr; <strong>phpMyAdmin</strong> &rarr; click the database the panel uses (its name is on the <code>DB_NAME</code> line of the panel's .env).</li>
+    <li>Click <strong>Import</strong> &rarr; <strong>Choose File</strong> &rarr; pick your newest panel backup file (see D) &rarr; <strong>Go</strong>.</li>
+    <li>Open the panel and check your businesses are back.</li>
+</ol>
+
+<h3>D. Backups to keep (do these now, and after big changes)</h3>
+<ol>
+    <li><strong>Signing key</strong> (once): cPanel &rarr; File Manager &rarr; <em>msp-control-panel/keys</em> &rarr; right-click <strong>licence-private.pem</strong> &rarr; <strong>Download</strong>. Keep it on a USB stick or in your password manager. Never email it. <em>This is the one thing that cannot be made again.</em></li>
+    <li><strong>Settings file</strong> (once): download <em>msp-control-panel/.env</em> the same way and keep it with the key.</li>
+    <li><strong>Panel records</strong> (after recording payments): cPanel &rarr; <strong>phpMyAdmin</strong> &rarr; the panel's database &rarr; <strong>Export</strong> &rarr; <strong>Custom</strong> &rarr; under Tables, tick only the tables that start with <code>cp_</code> &rarr; <strong>Go</strong>. Keep the downloaded file with the key.</li>
+</ol>
+
+<h3>E. Moving this panel to a new web address</h3>
+<ol>
+    <li>cPanel &rarr; <strong>Domains</strong> &rarr; create the new address and point its folder (Document Root) at the <em>msp-control-panel</em> folder.</li>
+    <li>For each business: cPanel &rarr; File Manager &rarr; that business's <strong>.env</strong> &rarr; Edit &rarr; change the <code>LICENCE_URL=</code> line to the new address, ending in <code>/api/licence.php</code> &rarr; Save.</li>
+    <li>Open each business's <strong>Licence</strong> page and press <strong>Check now</strong> to confirm it connects.</li>
+</ol>
 <?php
 view_foot();
