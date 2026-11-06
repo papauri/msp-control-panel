@@ -15,7 +15,7 @@ function view_head(string $title, bool $nav = true): void
         . '<link rel="stylesheet" href="assets/app.css"><script src="assets/app.js" defer></script></head><body>';
     if ($nav) {
         echo '<header class="top"><strong class="brand">Licence panel</strong><nav>'
-            . '<a href="index.php">Businesses</a><a href="tenant.php">Add business</a><a href="audit.php">Audit log</a></nav>'
+            . '<a href="index.php">Businesses</a><a href="tenant.php">Add business</a><a href="audit.php">Audit log</a><a href="guide.php">Guide</a></nav>'
             . '<form method="post" action="logout.php" class="inline">' . csrf_field()
             . '<button type="submit" class="link">Sign out</button></form></header>';
     }
@@ -42,8 +42,23 @@ function view_pill(string $status, bool $override = false): string
         . ($override ? ' <span class="tag">override</span>' : '');
 }
 
-// Column header with a short plain explanation underneath.
-function view_th(string $name, string $help): string
+// Column header: name, a short one-line helper underneath, and the full
+// explanation in the tooltip. If no short text is given, the full help is shown
+// (it must then already be short); the stylesheet keeps it to one line.
+function view_th(string $name, string $help, string $short = ''): string
 {
-    return '<th scope="col">' . e($name) . '<small>' . e($help) . '</small></th>';
+    $line = $short !== '' ? $short : $help;
+    return '<th scope="col" title="' . e($help) . '">' . e($name) . '<small>' . e($line) . '</small></th>';
+}
+
+// One muted dash for any empty value, on every table.
+function view_empty(): string
+{
+    return '<span class="muted" title="Nothing recorded">&ndash;</span>';
+}
+
+// Cell text kept on one line, cut with an ellipsis, full value in the tooltip.
+function view_trunc($v): string
+{
+    return '<span class="trunc" title="' . e($v) . '">' . e($v) . '</span>';
 }

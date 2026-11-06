@@ -314,18 +314,18 @@ if ($tenant) {
         echo '<p class="muted">None recorded yet.</p>';
     } else {
         echo '<div class="scroll"><table><thead><tr>'
-            . view_th('Recorded', 'When the payment was entered here.')
+            . view_th('Recorded', 'When the payment was entered here.', 'When entered')
             . view_th('Amount', 'Money received.')
             . view_th('Months', 'How many months it covered.')
-            . view_th('Paid until', 'The paid-until date before and after this payment.')
-            . view_th('Reference', 'Receipt, transfer or cheque number you entered.')
+            . view_th('Paid until', 'The paid-until date before and after this payment.', 'Before and after')
+            . view_th('Reference', 'Receipt, transfer or cheque number you entered.', 'Receipt or transfer no.')
             . '</tr></thead><tbody>';
         foreach ($payments as $p) {
-            echo '<tr><td data-label="Recorded">' . e($p['created_at']) . '</td>'
-                . '<td data-label="Amount">' . e($p['amount']) . ' ' . e($p['currency']) . '</td>'
+            echo '<tr><td data-label="Recorded" class="nw">' . e($p['created_at']) . '</td>'
+                . '<td data-label="Amount" class="nw">' . e($p['amount']) . ' ' . e($p['currency']) . '</td>'
                 . '<td data-label="Months">' . (int)$p['months'] . '</td>'
-                . '<td data-label="Paid until">' . e($p['paid_until_before']) . ' to ' . e($p['paid_until_after']) . '</td>'
-                . '<td data-label="Reference">' . e($p['reference']) . '</td></tr>';
+                . '<td data-label="Paid until" class="nw">' . e($p['paid_until_before']) . ' to ' . e($p['paid_until_after']) . '</td>'
+                . '<td data-label="Reference">' . (($p['reference'] ?? '') !== '' ? e($p['reference']) : view_empty()) . '</td></tr>';
         }
         echo '</tbody></table></div>';
     }
@@ -339,18 +339,18 @@ if ($tenant) {
         echo '<p class="muted">No check-ins yet.</p>';
     } else {
         echo '<div class="scroll"><table><thead><tr>'
-            . view_th('When', 'Time the customer system contacted this panel.')
-            . view_th('Result', 'The status it was given, or "denied" if the key or domain was wrong.')
-            . view_th('Domain reported', 'The website address the customer system said it was running on.')
+            . view_th('When', 'Time the customer system contacted this panel.', 'Time of contact')
+            . view_th('Result', 'The status it was given, or "denied" if the key or domain was wrong.', 'Status given')
+            . view_th('Domain reported', 'The website address the customer system said it was running on.', 'Address it reported')
             . view_th('Version', 'Software version reported.')
-            . view_th('IP', 'Address the request came from.')
+            . view_th('IP', 'Address the request came from.', 'Request address')
             . '</tr></thead><tbody>';
         foreach ($checks as $c) {
-            echo '<tr><td data-label="When">' . e($c['checked_at']) . '</td>'
+            echo '<tr><td data-label="When" class="nw">' . e($c['checked_at']) . '</td>'
                 . '<td data-label="Result">' . e($c['result_status']) . '</td>'
-                . '<td data-label="Domain reported">' . e($c['domain_reported']) . '</td>'
-                . '<td data-label="Version">' . e($c['pms_version']) . '</td>'
-                . '<td data-label="IP">' . e($c['ip']) . '</td></tr>';
+                . '<td data-label="Domain reported">' . (($c['domain_reported'] ?? '') !== '' ? view_trunc($c['domain_reported']) : view_empty()) . '</td>'
+                . '<td data-label="Version" class="nw">' . (($c['pms_version'] ?? '') !== '' ? e($c['pms_version']) : view_empty()) . '</td>'
+                . '<td data-label="IP" class="nw">' . (($c['ip'] ?? '') !== '' ? e($c['ip']) : view_empty()) . '</td></tr>';
         }
         echo '</tbody></table></div>';
     }

@@ -30,20 +30,20 @@ function audit_pretty(?string $json): string
 view_head('Audit log');
 echo '<h1>Audit log</h1><p class="muted">Every change and sign-in, newest first.</p>';
 echo '<div class="scroll"><table><thead><tr>'
-    . view_th('When', 'Date and time of the action.')
-    . view_th('Who', 'The admin who did it. Blank for failed sign-ins by an unknown email.')
+    . view_th('When', 'Date and time of the action.', 'Date and time')
+    . view_th('Who', 'The admin who did it. A dash means a failed sign-in by an unknown email.', 'Admin who did it')
     . view_th('Action', 'What was done.')
-    . view_th('Business', 'The business affected, if any.')
-    . view_th('Change', 'What the record looked like before and after. Secrets are never stored here.')
-    . view_th('IP', 'The address the request came from.')
+    . view_th('Business', 'The business affected, if any.', 'Business affected')
+    . view_th('Change', 'What the record looked like before and after. Secrets are never stored here.', 'Before and after')
+    . view_th('IP', 'The address the request came from.', 'Request address')
     . '</tr></thead><tbody>';
 foreach ($rows as $r) {
     $b = audit_pretty($r['before_json']);
     $a = audit_pretty($r['after_json']);
-    echo '<tr><td data-label="When">' . e($r['created_at']) . '</td>'
-        . '<td data-label="Who">' . e($r['admin_email'] ?? '') . '</td>'
+    echo '<tr><td data-label="When" class="nw">' . e($r['created_at']) . '</td>'
+        . '<td data-label="Who">' . (($r['admin_email'] ?? '') !== '' ? e($r['admin_email']) : view_empty()) . '</td>'
         . '<td data-label="Action">' . e($r['action']) . '</td>'
-        . '<td data-label="Business">' . e($r['tenant_slug'] ?? '') . '</td><td data-label="Change">';
+        . '<td data-label="Business">' . (($r['tenant_slug'] ?? '') !== '' ? e($r['tenant_slug']) : view_empty()) . '</td><td data-label="Change">';
     if ($b !== '' || $a !== '') {
         echo '<details><summary>Show</summary>';
         if ($b !== '') {
@@ -54,7 +54,7 @@ foreach ($rows as $r) {
         }
         echo '</details>';
     }
-    echo '</td><td data-label="IP">' . e($r['ip']) . '</td></tr>';
+    echo '</td><td data-label="IP" class="nw">' . (($r['ip'] ?? '') !== '' ? e($r['ip']) : view_empty()) . '</td></tr>';
 }
 echo '</tbody></table></div><p class="pager">';
 if ($page > 1) {
