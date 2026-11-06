@@ -13,6 +13,18 @@ $form = null; // sticky values after a failed save
 function back_to(int $tenantId): void
 {
     header('Location: tenant.php' . ($tenantId > 0 ? '?id=' . $tenantId : ''));
+    if ($tenantId > 0 && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+        // After a change, nudge that business to check in now. The redirect is sent first so the owner never waits.
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        } elseif (function_exists('litespeed_finish_request')) {
+            litespeed_finish_request();
+        }
+        tenant_nudge(db(), $tenantId);
+    }
     exit;
 }
 

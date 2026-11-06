@@ -83,6 +83,37 @@ function tenant_validate(array $in, bool $isNew): array
     return [$err, $clean];
 }
 
+/**
+ * Nudge a business's system to check in now (POST https://<domain>/api/licence-ping.php). The nudge carries nothing:
+ * the business still fetches and verifies the signed answer itself, so a change made here reaches it within seconds
+ * instead of waiting for its hourly check. Best effort: a short timeout, the result is ignored.
+ */
+function tenant_nudge(PDO $pdo, int $tenantId): void
+{
+    try {
+        $t = tenant_find($pdo, $tenantId);
+        $domain = $t ? licence_normalise_domain((string)$t['domain']) : '';
+        if ($domain === '' || !licence_domain_valid($domain) || !function_exists('curl_init')) {
+            return;
+        }
+        $ch = curl_init('https://' . $domain . '/api/licence-ping.php');
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => '',
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 4,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_FOLLOWLOCATION => false,
+        ]);
+        curl_exec($ch);
+        curl_close($ch);
+    } catch (Throwable $e) {
+        error_log('tenant_nudge: ' . $e->getMessage());
+    }
+}
+
 function flash_set(string $type, string $msg): void
 {
     $_SESSION['flash'][] = [$type, $msg];

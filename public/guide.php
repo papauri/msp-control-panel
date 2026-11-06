@@ -11,7 +11,7 @@ view_head('Guide');
 
 <h2>1. What this panel does</h2>
 <p>This panel keeps a record of each business that uses the hotel system (PMS). It records what each business pays for.</p>
-<p>Once a day, each business's system checks in with this panel. The panel tells that system whether the business is Active, Grace, Read only or Suspended.</p>
+<p>Each business's system checks in with this panel by itself every hour. When you change a business here (status, payment, type or modules), the panel also nudges that business to check in straight away, so the change shows within seconds. The panel tells that system whether the business is Active, Grace, Read only or Suspended.</p>
 <ul>
     <li>The guest website is never switched off.</li>
     <li>Data is never deleted.</li>
