@@ -170,7 +170,7 @@ view_head('Guide');
     <li>Open <strong>Signing key</strong> in the top menu.</li>
     <li>If it says there is no key yet, click <strong>Create signing key</strong>. This is done once and the key is never replaced.</li>
     <li>Copy the <strong>Public key</strong> shown on the page (all of it). It goes into the business system's code. It is not secret.</li>
-    <li>Back up the private key: download it once with cPanel File Manager from the path shown, and keep it offline. Never email it.</li>
+    <li>Back up the key: on the same page, enter your password and a new 6-digit code and click <strong>Download backup</strong>. Keep the file offline. Never email it.</li>
 </ol>
 <p>Until a key exists, every check-in is answered with "unavailable" and nothing changes at the businesses.</p>
 
@@ -220,8 +220,7 @@ view_head('Guide');
 
 <h3>D. Backups to keep (do these now, and after big changes)</h3>
 <ol>
-    <li><strong>Signing key</strong> (once): cPanel &rarr; File Manager &rarr; <em>msp-control-panel/keys</em> &rarr; right-click <strong>licence-private.pem</strong> &rarr; <strong>Download</strong>. Keep it on a USB stick or in your password manager. Never email it. <em>This is the one thing that cannot be made again.</em></li>
-    <li><strong>Settings file</strong> (once): download <em>msp-control-panel/.env</em> the same way and keep it with the key.</li>
+    <li><strong>Signing key and settings</strong> (once, and again if you change the panel's settings): open <strong>Signing key</strong> in the top menu, enter your password and a new 6-digit code, click <strong>Download backup</strong>. One file holds the private key, the public key and the panel's settings file. Keep it on a USB stick or in your password manager. Never email it. <em>The key is the one thing that cannot be made again.</em> (If the panel will not open: cPanel &rarr; File Manager &rarr; <em>msp-control-panel/keys</em> &rarr; right-click <strong>licence-private.pem</strong> &rarr; <strong>Download</strong>, and the same for <em>.env</em>.)</li>
     <li><strong>Panel records</strong> (after recording payments): cPanel &rarr; <strong>phpMyAdmin</strong> &rarr; the panel's database &rarr; <strong>Export</strong> &rarr; <strong>Custom</strong> &rarr; under Tables, tick only the tables that start with <code>cp_</code> &rarr; <strong>Go</strong>. Keep the downloaded file with the key.</li>
 </ol>
 

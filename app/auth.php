@@ -111,6 +111,45 @@ function auth_attempt(PDO $pdo, string $email, string $password, string $code): 
     return false;
 }
 
+/**
+ * Re-confirms the SIGNED-IN admin with their password and a fresh 6-digit code before a sensitive action
+ * (downloading the key backup). Same single-use code rule and lockout counter as sign-in; rate-limited.
+ */
+function auth_reconfirm(PDO $pdo, int $adminId, string $password, string $code): bool
+{
+    if (!rate_limit_hit($pdo, 'reconfirm:' . $adminId, 5, 900) || strlen($password) > 1024) {
+        return false;
+    }
+    $st = $pdo->prepare(
+        'SELECT id, password_hash, totp_secret, (locked_until IS NOT NULL AND locked_until > NOW()) AS is_locked
+         FROM cp_admins WHERE id = ?'
+    );
+    $st->execute([$adminId]);
+    $admin = $st->fetch();
+    if (!$admin || (int)$admin['is_locked']) {
+        return false;
+    }
+    $pwOk = password_verify($password, (string)$admin['password_hash']);
+    $step = totp_verify((string)$admin['totp_secret'], $code, time(), 1);
+    if ($pwOk && $step !== false) {
+        $up = $pdo->prepare('UPDATE cp_admins SET totp_last_step = ?, failed_count = 0 WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)');
+        $up->execute([$step, $adminId, $step]);
+        if ($up->rowCount() === 1) {
+            return true;
+        }
+    }
+    $f = $pdo->prepare(
+        'UPDATE cp_admins
+         SET locked_until = IF(failed_count + 1 >= ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), locked_until),
+             failed_count = IF(failed_count + 1 >= ?, 0, failed_count + 1)
+         WHERE id = ?'
+    );
+    $f->execute([AUTH_MAX_FAILURES, AUTH_LOCK_MINUTES, AUTH_MAX_FAILURES, $adminId]);
+    audit_log($pdo, $adminId, 'reconfirm_failed', null, null, null);
+    usleep(random_int(150000, 350000));
+    return false;
+}
+
 // Returns the logged-in admin row or null (no redirect).
 function auth_current(PDO $pdo): ?array
 {

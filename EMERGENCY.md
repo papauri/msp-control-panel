@@ -44,9 +44,12 @@ That's it. The business works normally straight away: no banner, no locks, no ch
 
 ## D. Backups to keep (do these now, and after big changes)
 
-1. **Signing key** (once): cPanel → File Manager → *msp-control-panel/keys* → right-click **licence-private.pem** → **Download**.
-   Keep it on a USB stick or in your password manager. Never email it. *This is the one thing that cannot be made again.*
-2. **Settings file** (once): download *msp-control-panel/.env* the same way and keep it with the key.
+1. **Signing key and settings** (once, and again after changing the panel's settings): in the panel open **Signing key**,
+   enter your password and a new 6-digit code, click **Download backup**. One file holds the private key, the public key
+   and the panel's settings file (.env). Keep it on a USB stick or in your password manager. Never email it.
+   *The key is the one thing that cannot be made again.*
+2. **If the panel will not open:** cPanel → File Manager → *msp-control-panel/keys* → right-click **licence-private.pem** →
+   **Download**, and download *msp-control-panel/.env* the same way.
 3. **Panel records** (after recording payments): cPanel → **phpMyAdmin** → the panel's database → **Export** → **Custom** →
    under Tables, tick only the tables that start with `cp_` → **Go**. Keep the downloaded file with the key.
 
