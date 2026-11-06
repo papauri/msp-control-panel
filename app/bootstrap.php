@@ -30,6 +30,7 @@ require_once __DIR__ . '/signing.php';
 require_once __DIR__ . '/totp.php';
 require_once __DIR__ . '/csrf.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/catalog.php';
 require_once __DIR__ . '/tenants.php';
 require_once __DIR__ . '/view.php';
 

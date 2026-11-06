@@ -50,3 +50,7 @@ th small { display: block; font-weight: 400; font-size: .78rem; color: #5b6675; 
   td { border: 0; padding: .25rem .5rem; }
   td::before { content: attr(data-label); display: block; font-size: .75rem; color: #5b6675; }
 }
+
+form fieldset.modules { border: 1px solid #b8bec8; border-radius: 4px; margin: 0 0 .75rem; padding: .5rem .75rem; max-width: 480px; }
+form fieldset.modules legend { font-weight: 600; padding: 0 .25rem; }
+form label.check { display: block; margin: .25rem 0; font-weight: 400; }

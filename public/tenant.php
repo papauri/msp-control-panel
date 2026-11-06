@@ -31,11 +31,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($postId === 0) {
                     $key = tenant_new_api_key();
                     $st = $pdo->prepare(
-                        'INSERT INTO cp_tenants (slug, name, domain, plan, monthly_fee, currency, paid_until, grace_days, readonly_days, api_key_hash, notes)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                        'INSERT INTO cp_tenants (slug, name, business_type, modules, domain, plan, monthly_fee, currency, paid_until, grace_days, readonly_days, api_key_hash, notes)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                     );
                     $st->execute([
-                        $clean['slug'], $clean['name'], $clean['domain'], $clean['plan'], $clean['monthly_fee'],
+                        $clean['slug'], $clean['name'], $clean['business_type'], $clean['modules_json'], $clean['domain'], $clean['plan'], $clean['monthly_fee'],
                         $clean['currency'], $clean['paid_until'], $clean['grace_days'], $clean['readonly_days'],
                         password_hash($key, PASSWORD_BCRYPT, ['cost' => 10]), $clean['notes'],
                     ]);
@@ -43,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     audit_log($pdo, $adminId, 'tenant_create', $newId, null, tenant_find($pdo, $newId));
                     $pdo->commit();
                     $_SESSION['new_key'] = [$newId, $key];
-                    flash_set('ok', 'Hotel added. Copy the API key below now: it is shown only once.');
+                    flash_set('ok', 'Business added. Copy the API key below now: it is shown only once.');
                     back_to($newId);
                 }
                 $before = tenant_find($pdo, $postId, true);
@@ -52,11 +52,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     back_to(0);
                 }
                 $st = $pdo->prepare(
-                    'UPDATE cp_tenants SET name=?, domain=?, plan=?, monthly_fee=?, currency=?, paid_until=?,
+                    'UPDATE cp_tenants SET name=?, business_type=?, modules=?, domain=?, plan=?, monthly_fee=?, currency=?, paid_until=?,
                         grace_days=?, readonly_days=?, notes=? WHERE id=?'
                 );
                 $st->execute([
-                    $clean['name'], $clean['domain'], $clean['plan'], $clean['monthly_fee'], $clean['currency'],
+                    $clean['name'], $clean['business_type'], $clean['modules_json'], $clean['domain'], $clean['plan'], $clean['monthly_fee'], $clean['currency'],
                     $clean['paid_until'], $clean['grace_days'], $clean['readonly_days'], $clean['notes'], $postId,
                 ]);
                 audit_log($pdo, $adminId, 'tenant_update', $postId, $before, tenant_find($pdo, $postId));
@@ -118,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([$ov, $reason, $postId]);
                 audit_log($pdo, $adminId, 'override_set', $postId, $before, tenant_find($pdo, $postId));
                 $pdo->commit();
-                flash_set('ok', 'Override set. The hotel picks it up at its next check-in.');
+                flash_set('ok', 'Override set. The business picks it up at its next check-in.');
                 back_to($postId);
             }
         } elseif ($action === 'override_clear' && $postId > 0) {
@@ -165,7 +165,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->rollBack();
         }
         if ($ex->getCode() === '23000') {
-            $errors[] = 'That short name is already used by another hotel.';
+            $errors[] = 'That short name is already used by another business.';
         } else {
             error_log('tenant.php: ' . $ex->getMessage());
             $errors[] = 'Could not save. Nothing was changed.';
@@ -180,7 +180,7 @@ $tenant = $id > 0 ? tenant_find($pdo, $id) : null;
 if ($id > 0 && !$tenant) {
     http_response_code(404);
     view_head('Not found');
-    echo '<p>Hotel not found. <a href="index.php">Back to hotels</a></p>';
+    echo '<p>Business not found. <a href="index.php">Back to businesses</a></p>';
     view_foot();
     exit;
 }
@@ -202,13 +202,13 @@ $v = function (string $k, $default = '') use ($form, $tenant) {
     return $default;
 };
 
-view_head($tenant ? $tenant['name'] : 'Add hotel');
+view_head($tenant ? $tenant['name'] : 'Add business');
 view_flash();
 foreach ($errors as $m) {
     echo '<p class="flash flash-error">' . e($m) . '</p>';
 }
 
-echo '<h1>' . ($tenant ? e($tenant['name']) : 'Add hotel') . '</h1>';
+echo '<h1>' . ($tenant ? e($tenant['name']) : 'Add business') . '</h1>';
 
 if ($tenant) {
     $computed = status_compute($tenant, $today);
@@ -227,7 +227,7 @@ if ($tenant) {
 
     if ($shownKey !== null) {
         echo '<section class="card key"><h2>API key (shown once)</h2>'
-            . '<p>Copy this into the hotel system now. It cannot be shown again; if lost, generate a new one.</p>'
+            . '<p>Copy this into the customer system now. It cannot be shown again; if lost, generate a new one.</p>'
             . '<p><code class="keybox">' . e($shownKey) . '</code></p>'
             . '<p class="muted">Short name to use with it: <code>' . e($tenant['slug']) . '</code></p></section>';
     }
@@ -244,7 +244,7 @@ if ($tenant) {
 
     echo '<section class="card"><h2>Status override</h2>'
         . '<p class="muted">Forces a status regardless of the date, for example to keep a friendly customer active or to lock one at once. '
-        . 'An "active" override is lifted if the hotel cannot reach this panel for over 35 days and the date has passed.</p>';
+        . 'An "active" override is lifted if the business cannot reach this panel for over 35 days and the date has passed.</p>';
     echo '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '">' . csrf_field()
         . '<input type="hidden" name="action" value="override_set"><input type="hidden" name="id" value="' . (int)$tenant['id'] . '">'
         . '<label>Force status<select name="override" required>';
@@ -263,17 +263,32 @@ if ($tenant) {
 }
 
 // Details form (add or edit).
-echo '<section class="card"><h2>' . ($tenant ? 'Details' : 'New hotel') . '</h2>'
+echo '<section class="card"><h2>' . ($tenant ? 'Details' : 'New business') . '</h2>'
     . '<form method="post" action="tenant.php' . ($tenant ? '?id=' . (int)$tenant['id'] : '') . '">' . csrf_field()
     . '<input type="hidden" name="action" value="save"><input type="hidden" name="id" value="' . ($tenant ? (int)$tenant['id'] : 0) . '">';
 if ($tenant) {
     echo '<label>Short name (identifier, cannot change)<input type="text" value="' . e($tenant['slug']) . '" disabled></label>';
 } else {
-    echo '<label>Short name (lowercase, used by the hotel system to identify itself)'
+    echo '<label>Short name (lowercase, used by the customer system to identify itself)'
         . '<input type="text" name="slug" required maxlength="63" pattern="[a-z0-9][a-z0-9\-]{1,62}" value="' . e($v('slug')) . '"></label>';
 }
-echo '<label>Hotel name<input type="text" name="name" required maxlength="190" value="' . e($v('name')) . '"></label>'
-    . '<label>Website domain (must match what the hotel system reports)<input type="text" name="domain" required maxlength="255" value="' . e($v('domain')) . '"></label>'
+$selType = (string)$v('business_type', 'full_hotel');
+if (!isset(catalog_business_types()[$selType])) {
+    $selType = 'custom';
+}
+$selMods = is_array($form) && isset($form['modules']) ? $form['modules']
+    : ($tenant ? catalog_tenant_modules($tenant) : catalog_clean_modules(catalog_business_types()[$selType][1]));
+echo '<label>Business name<input type="text" name="name" required maxlength="190" value="' . e($v('name')) . '"></label>'
+    . '<label>Business type (ticks the usual modules; change them below if needed)<select name="business_type" id="business_type" required>';
+foreach (catalog_business_types() as $tk => $tv) {
+    echo '<option value="' . e($tk) . '" data-modules="' . e(implode(',', $tv[1])) . '"' . ($selType === $tk ? ' selected' : '') . '>' . e($tv[0]) . '</option>';
+}
+echo '</select></label><fieldset class="modules" id="modules"><legend>Licensed modules (what this business may use)</legend>';
+foreach (catalog_modules() as $mk => $ml) {
+    echo '<label class="check"><input type="checkbox" name="modules[]" value="' . e($mk) . '"' . (in_array($mk, $selMods, true) ? ' checked' : '') . '> ' . e($ml) . '</label>';
+}
+echo '</fieldset>';
+echo '<label>Website domain (must match what the customer system reports)<input type="text" name="domain" required maxlength="255" value="' . e($v('domain')) . '"></label>'
     . '<label>Plan<input type="text" name="plan" maxlength="60" value="' . e($v('plan')) . '"></label>'
     . '<label>Monthly fee<input type="text" name="monthly_fee" inputmode="decimal" required value="' . e($v('monthly_fee', '0')) . '"></label>'
     . '<label>Currency<input type="text" name="currency" required maxlength="3" value="' . e($v('currency', 'MWK')) . '"></label>'
@@ -281,12 +296,12 @@ echo '<label>Hotel name<input type="text" name="name" required maxlength="190" v
     . '<label>Grace days (banner shown, everything works)<input type="number" name="grace_days" min="0" max="365" required value="' . e($v('grace_days', '14')) . '"></label>'
     . '<label>Read-only days (view, check-out and export only)<input type="number" name="readonly_days" min="0" max="365" required value="' . e($v('readonly_days', '14')) . '"></label>'
     . '<label>Notes<textarea name="notes" rows="3" maxlength="2000">' . e($v('notes')) . '</textarea></label>'
-    . '<button type="submit">' . ($tenant ? 'Save details' : 'Add hotel') . '</button></form></section>';
+    . '<button type="submit">' . ($tenant ? 'Save details' : 'Add business') . '</button></form></section>';
 
 if ($tenant) {
     echo '<section class="card"><h2>API key</h2>'
-        . '<p class="muted">' . ($tenant['api_key_hash'] ? 'A key is set. It cannot be displayed.' : 'No key set; the hotel cannot check in.')
-        . ' Generating a new key stops the old one working immediately; update the hotel system straight after.</p>'
+        . '<p class="muted">' . ($tenant['api_key_hash'] ? 'A key is set. It cannot be displayed.' : 'No key set; the business cannot check in.')
+        . ' Generating a new key stops the old one working immediately; update the customer system straight after.</p>'
         . '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '">' . csrf_field()
         . '<input type="hidden" name="action" value="regen_key"><input type="hidden" name="id" value="' . (int)$tenant['id'] . '">'
         . '<button type="submit" class="danger">Generate new API key</button></form></section>';
@@ -324,9 +339,9 @@ if ($tenant) {
         echo '<p class="muted">No check-ins yet.</p>';
     } else {
         echo '<div class="scroll"><table><thead><tr>'
-            . view_th('When', 'Time the hotel system contacted this panel.')
+            . view_th('When', 'Time the customer system contacted this panel.')
             . view_th('Result', 'The status it was given, or "denied" if the key or domain was wrong.')
-            . view_th('Domain reported', 'The website address the hotel system said it was running on.')
+            . view_th('Domain reported', 'The website address the customer system said it was running on.')
             . view_th('Version', 'Software version reported.')
             . view_th('IP', 'Address the request came from.')
             . '</tr></thead><tbody>';

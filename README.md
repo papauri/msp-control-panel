@@ -24,7 +24,16 @@ No cron job is needed. Rate limits and sessions clean themselves up.
 
 ## Tests
 
-`php scripts/tests/status_test.php` and `totp_test.php`, `signing_test.php`, `verifier_test.php`. No database needed.
+`php scripts/tests/status_test.php` and `totp_test.php`, `signing_test.php`, `verifier_test.php`, `catalog_test.php`. No database needed.
+
+## Business types and modules
+
+The PMS is sold to hotels, bars and restaurants, conference venues, gyms, shops and supermarkets. Each customer has a **business type** (Full Hotel, Hotel without restaurant, Bar / Restaurant, Conference Venue, Gym / Fitness, Retail / Shop, Supermarket, Custom) and a list of **licensed modules** (bookings, housekeeping, point of sale, stock, conference, gym, finance, website, the kitchen, bar, coffee and room-service stations, and the Assistant add-on). The lists live in `app/catalog.php` and mirror the PMS presets.
+
+- Choosing a type on the customer page ticks that type's usual modules. Changing a box by hand switches the type to Custom. The Assistant add-on can be added to any type.
+- Customers saved before this existed have no module list stored; the panel treats that as the full set for their type (Full Hotel by default).
+- Both values are signed into the licence token (`business_type` string, `modules` array of keys; token version stays 1). `client/licence-verify.php` returns them as `business_type` and `modules` (both null when an older token carries none). Enforcement in the PMS is separate.
+- `php scripts/migrate.php` records applied files in `cp_schema_migrations` and skips them on re-run.
 
 ## PMS side
 

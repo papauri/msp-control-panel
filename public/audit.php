@@ -33,7 +33,7 @@ echo '<div class="scroll"><table><thead><tr>'
     . view_th('When', 'Date and time of the action.')
     . view_th('Who', 'The admin who did it. Blank for failed sign-ins by an unknown email.')
     . view_th('Action', 'What was done.')
-    . view_th('Hotel', 'The hotel affected, if any.')
+    . view_th('Business', 'The business affected, if any.')
     . view_th('Change', 'What the record looked like before and after. Secrets are never stored here.')
     . view_th('IP', 'The address the request came from.')
     . '</tr></thead><tbody>';
@@ -43,7 +43,7 @@ foreach ($rows as $r) {
     echo '<tr><td data-label="When">' . e($r['created_at']) . '</td>'
         . '<td data-label="Who">' . e($r['admin_email'] ?? '') . '</td>'
         . '<td data-label="Action">' . e($r['action']) . '</td>'
-        . '<td data-label="Hotel">' . e($r['tenant_slug'] ?? '') . '</td><td data-label="Change">';
+        . '<td data-label="Business">' . e($r['tenant_slug'] ?? '') . '</td><td data-label="Change">';
     if ($b !== '' || $a !== '') {
         echo '<details><summary>Show</summary>';
         if ($b !== '') {

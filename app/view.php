@@ -12,10 +12,10 @@ function view_head(string $title, bool $nav = true): void
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<meta name="robots" content="noindex,nofollow">'
         . '<title>' . e($title) . ' - Licence panel</title>'
-        . '<link rel="stylesheet" href="assets/app.css"></head><body>';
+        . '<link rel="stylesheet" href="assets/app.css"><script src="assets/app.js" defer></script></head><body>';
     if ($nav) {
         echo '<header class="top"><strong class="brand">Licence panel</strong><nav>'
-            . '<a href="index.php">Hotels</a><a href="tenant.php">Add hotel</a><a href="audit.php">Audit log</a></nav>'
+            . '<a href="index.php">Businesses</a><a href="tenant.php">Add business</a><a href="audit.php">Audit log</a></nav>'
             . '<form method="post" action="logout.php" class="inline">' . csrf_field()
             . '<button type="submit" class="link">Sign out</button></form></header>';
     }

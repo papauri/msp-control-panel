@@ -1,6 +1,7 @@
 <?php
 // Licence check-in endpoint. POST JSON only, no cookies, no sessions.
 // Request:  {"tenant": "<slug>", "domain": "<site host>", "key": "<api key>", "version": "<pms version>"}
+// The signed payload also carries business_type and modules (licensed module keys) for the PMS to enforce.
 // Response: {"payload": base64url(JSON), "sig": base64url(DER ECDSA P-256/SHA-256 over the JSON bytes)}
 
 require_once __DIR__ . '/../../app/bootstrap.php';
@@ -112,6 +113,8 @@ $payload = [
     'v' => 1,
     'tenant' => $tenant['slug'],
     'domain' => licence_normalise_domain((string)$tenant['domain']),
+    'business_type' => (string)($tenant['business_type'] ?? 'full_hotel'),
+    'modules' => catalog_tenant_modules($tenant),
     'status' => $status,
     'override' => !empty($tenant['status_override']),
     'paid_until' => $tenant['paid_until'],

@@ -130,6 +130,17 @@ function lv_check_token($token, string $publicKeyPem, string $siteTenant, string
             return $fail('replayed');
         }
         $p['override'] = !empty($p['override']);
+        // Additive fields: older panels may not send them.
+        $p['business_type'] = isset($p['business_type']) && is_string($p['business_type']) ? $p['business_type'] : null;
+        $mods = [];
+        if (isset($p['modules']) && is_array($p['modules'])) {
+            foreach ($p['modules'] as $m) {
+                if (is_string($m) && preg_match('/^[a-z0-9_]{1,40}$/', $m) && !in_array($m, $mods, true)) {
+                    $mods[] = $m;
+                }
+            }
+        }
+        $p['modules'] = isset($p['modules']) && is_array($p['modules']) ? $mods : null;
         return ['ok' => true, 'reason' => 'ok', 'payload' => $p];
     } catch (Throwable $e) {
         return $fail('error');
@@ -143,6 +154,9 @@ function lv_check_token($token, string $publicKeyPem, string $siteTenant, string
  *   reason    short machine-readable reason
  *   issued_at accepted issued_at (int) or null
  *   payload   verified payload or null
+ *   business_type  licensed business type key, or null when the token carries none (older panel)
+ *   modules   list of licensed module keys, or null when the token carries none. null means "not stated":
+ *             the PMS should then keep its own settings rather than switch everything off.
  *
  * $token: the stored {payload, sig} array or its JSON string (or null).
  * $lastIssuedAt: highest issued_at ever accepted (0 if none) - anti-replay.
@@ -150,7 +164,7 @@ function lv_check_token($token, string $publicKeyPem, string $siteTenant, string
  */
 function lv_evaluate($token, string $publicKeyPem, string $siteTenant, string $siteDomain, int $lastIssuedAt, int $now, string $fallback = 'active'): array
 {
-    $fb = ['status' => $fallback, 'source' => 'fallback', 'reason' => 'no_token', 'issued_at' => null, 'payload' => null];
+    $fb = ['status' => $fallback, 'source' => 'fallback', 'reason' => 'no_token', 'issued_at' => null, 'payload' => null, 'business_type' => null, 'modules' => null];
     try {
         if ($token === null || $token === '' || $token === []) {
             return $fb;
@@ -186,7 +200,8 @@ function lv_evaluate($token, string $publicKeyPem, string $siteTenant, string $s
             $status = $schedule;
             $source = 'schedule';
         }
-        return ['status' => $status, 'source' => $source, 'reason' => 'ok', 'issued_at' => $p['issued_at'], 'payload' => $p];
+        return ['status' => $status, 'source' => $source, 'reason' => 'ok', 'issued_at' => $p['issued_at'], 'payload' => $p,
+            'business_type' => $p['business_type'], 'modules' => $p['modules']];
     } catch (Throwable $e) {
         $fb['reason'] = 'error';
         return $fb;

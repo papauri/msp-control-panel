@@ -39,15 +39,26 @@ function tenant_validate(array $in, bool $isNew): array
         'currency' => strtoupper($s('currency', 3)),
         'paid_until' => $s('paid_until', 10),
         'notes' => $s('notes', 2000),
+        'business_type' => $s('business_type', 40),
     ];
+    if (!isset(catalog_business_types()[$clean['business_type']])) {
+        $err[] = 'Choose a business type from the list.';
+        $clean['business_type'] = 'custom';
+    }
+    $clean['modules'] = catalog_clean_modules($in['modules'] ?? []);
+    // A preset type must match its preset exactly (the Assistant add-on may be added). Otherwise it is Custom.
+    if ($clean['business_type'] !== 'custom' && !catalog_matches_preset($clean['business_type'], $clean['modules'])) {
+        $clean['business_type'] = 'custom';
+    }
+    $clean['modules_json'] = json_encode($clean['modules']);
     if ($isNew && !preg_match('/^[a-z0-9][a-z0-9-]{1,62}$/', $clean['slug'])) {
         $err[] = 'Short name must be 2-63 characters: lowercase letters, numbers and hyphens.';
     }
     if ($clean['name'] === '') {
-        $err[] = 'Hotel name is required.';
+        $err[] = 'Business name is required.';
     }
     if (!licence_domain_valid($clean['domain'])) {
-        $err[] = 'Enter the hotel website domain, for example hotel.example.com.';
+        $err[] = 'Enter the business website domain, for example shop.example.com.';
     }
     if (!preg_match('/^[A-Z]{3}$/', $clean['currency'])) {
         $err[] = 'Currency must be a 3-letter code such as MWK.';

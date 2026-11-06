@@ -45,6 +45,22 @@ t_eq('source server', 'server', $r['source']);
 t_eq('issued_at returned', $NOW, $r['issued_at']);
 t_eq('JSON string token accepted', 'active', ev(json_encode($tok), $NOW)['status']);
 
+// Business type and modules ride in the signed payload (additive; v stays 1).
+$r = ev(mk(['business_type' => 'retail_shop', 'modules' => ['pos', 'stock', 'finance']], $priv), $NOW);
+t_eq('business_type returned', 'retail_shop', $r['business_type']);
+t_eq('modules returned', ['pos', 'stock', 'finance'], $r['modules']);
+t_eq('modules also in payload', ['pos', 'stock', 'finance'], $r['payload']['modules']);
+t_eq('modules do not change status', 'active', $r['status']);
+$r = ev(mk(['business_type' => 'custom', 'modules' => []], $priv), $NOW);
+t_eq('empty modules list stays empty', [], $r['modules']);
+$r = ev($tok, $NOW);
+t_eq('older token: business_type null', null, $r['business_type']);
+t_eq('older token: modules null', null, $r['modules']);
+$r = ev(mk(['business_type' => 'x', 'modules' => ['pos', 'pos', 5, 'Bad Key', 'gym']], $priv), $NOW);
+t_eq('modules sanitised on read', ['pos', 'gym'], $r['modules']);
+$r = ev($tok, $NOW, 0, 'evil.example.org');
+t_eq('fallback carries no modules', null, $r['modules']);
+
 // Domain and tenant binding.
 t_eq('www. and case treated as same', 'ok', ev($tok, $NOW, 0, 'WWW.Hotel.Example.com')['reason']);
 t_eq('scheme/port stripped', 'ok', ev($tok, $NOW, 0, 'https://hotel.example.com:443/')['reason']);

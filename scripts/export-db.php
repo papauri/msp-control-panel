@@ -10,7 +10,7 @@ if (PHP_SAPI !== 'cli') {
 }
 require_once __DIR__ . '/../app/bootstrap.php';
 
-const EXPORT_TABLES = ['cp_admins', 'cp_tenants', 'cp_payments', 'cp_licence_checks', 'cp_audit_log', 'cp_rate_limits'];
+const EXPORT_TABLES = ['cp_admins', 'cp_tenants', 'cp_payments', 'cp_licence_checks', 'cp_audit_log', 'cp_rate_limits', 'cp_schema_migrations'];
 
 $pdo = db();
 $dir = APP_ROOT . '/database';
