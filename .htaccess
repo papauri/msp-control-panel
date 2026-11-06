@@ -1,3 +1,21 @@
-# Defence in depth: if the document root is ever set to this folder instead of public/,
-# nothing here is served. The real web root is public/ (see README).
-Require all denied
+# The web root should be public/. Some hosts (e.g. a cPanel temporary domain) point the domain at
+# this project folder instead. Then every request is sent into public/ internally, so app/, scripts/,
+# migrations/, keys/, database/, logs/ and .env are never served: they map to public/<name>, which
+# does not exist. When the web root IS public/, the per-directory path already starts with public/
+# and nothing is rewritten.
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(?!public/)(.*)$ public/$1 [L]
+</IfModule>
+
+# Without mod_rewrite, refuse everything rather than expose the project folder.
+<IfModule !mod_rewrite.c>
+    Require all denied
+</IfModule>
+
+# Never serve dot-files (.env, .git), keys, SQL exports, logs or docs directly, whatever the routing.
+<FilesMatch "(^\.|\.(pem|key|sql|log|md|txt)$)">
+    Require all denied
+</FilesMatch>
