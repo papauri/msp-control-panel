@@ -27,6 +27,7 @@ require_once __DIR__ . '/audit.php';
 require_once __DIR__ . '/status.php';
 require_once __DIR__ . '/domain.php';
 require_once __DIR__ . '/signing.php';
+require_once __DIR__ . '/keys.php';
 require_once __DIR__ . '/totp.php';
 require_once __DIR__ . '/csrf.php';
 require_once __DIR__ . '/auth.php';

@@ -15,7 +15,7 @@ function view_head(string $title, bool $nav = true): void
         . '<link rel="stylesheet" href="assets/app.css"><script src="assets/app.js" defer></script></head><body>';
     if ($nav) {
         echo '<header class="top"><strong class="brand">Licence panel</strong><nav>'
-            . '<a href="index.php">Businesses</a><a href="tenant.php">Add business</a><a href="audit.php">Audit log</a><a href="guide.php">Guide</a></nav>'
+            . '<a href="index.php">Businesses</a><a href="tenant.php">Add business</a><a href="audit.php">Audit log</a><a href="keys.php">Signing key</a><a href="guide.php">Guide</a></nav>'
             . '<form method="post" action="logout.php" class="inline">' . csrf_field()
             . '<button type="submit" class="link">Sign out</button></form></header>';
     }

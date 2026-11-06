@@ -163,5 +163,15 @@ view_head('Guide');
     <li>Click save.</li>
 </ol>
 <p>Until the domain is changed, the licence will not work on the new address.</p>
+
+<h2>11. Signing key</h2>
+<p>The panel signs every answer it gives a business, so a business cannot fake "Active". This needs a signing key, made once.</p>
+<ol>
+    <li>Open <strong>Signing key</strong> in the top menu.</li>
+    <li>If it says there is no key yet, click <strong>Create signing key</strong>. This is done once and the key is never replaced.</li>
+    <li>Copy the <strong>Public key</strong> shown on the page (all of it). It goes into the business system's code. It is not secret.</li>
+    <li>Back up the private key: download it once with cPanel File Manager from the path shown, and keep it offline. Never email it.</li>
+</ol>
+<p>Until a key exists, every check-in is answered with "unavailable" and nothing changes at the businesses.</p>
 <?php
 view_foot();
