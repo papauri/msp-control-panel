@@ -61,7 +61,13 @@ if (!file_exists($ht)) {
     @file_put_contents($ht, "Require all denied\n");
 }
 
+// The public key is not secret: also saved beside the private key so it can be copied from
+// cPanel File Manager when the script was run from a one-off cron job (no terminal).
+$pub = $dir . '/licence-public.pem';
+@file_put_contents($pub, $pair['public']);
+
 echo "Private key written to: $path (keep it secret; back it up offline)\n";
+echo "Public key also saved to: $pub\n";
 echo "Set PRIVATE_KEY_PATH in .env to this absolute path.\n\n";
 echo "PUBLIC KEY (paste into the PMS as a code constant):\n\n";
 echo $pair['public'];
