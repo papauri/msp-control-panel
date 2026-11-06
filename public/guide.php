@@ -71,9 +71,9 @@ view_head('Guide');
     <li>Set the <strong>paid-until</strong> date.</li>
     <li>Set the <strong>grace days</strong> and the <strong>read-only days</strong>. The defaults are 14 and 14.</li>
     <li>Click save.</li>
-    <li>Copy the <strong>API key</strong> straight away. It is shown <strong>once only</strong>. Paste it into that business's settings file.</li>
+    <li>Copy the <strong>licence key (API key)</strong> straight away. It is shown <strong>once only</strong>. Paste it into that business's settings file.</li>
 </ol>
-<p class="muted">If the API key is lost, make a new one for that business. The old key stops working as soon as the new one is made.</p>
+<p class="muted">If the licence key is lost, make a new one for that business. The business page shows the last 4 characters of the current key so you can check it matches; the business's admin can also paste a new key on their own Licence page. The old key stops working as soon as the new one is made.</p>
 <p class="muted">If something goes wrong: "That short name is already used by another business." Choose a different short name.</p>
 
 <h2>5. Business types and modules</h2>
@@ -142,7 +142,7 @@ view_head('Guide');
     <li><strong>Action</strong> and <strong>Business</strong>: what was done, and to which business.</li>
     <li><strong>Change</strong>: click <strong>Show</strong> to see the record before and after the change.</li>
 </ul>
-<p class="muted">API keys are never stored in the audit log.</p>
+<p class="muted">Licence keys (API keys) are never stored in the audit log.</p>
 
 <h2>9. Sign in</h2>
 <ol>

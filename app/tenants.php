@@ -23,6 +23,12 @@ function tenant_new_api_key(): string
     return 'mspk_' . bin2hex(random_bytes(32));
 }
 
+// Last 4 characters of a licence key, shown so the owner can match keys. Useless on its own.
+function tenant_key_hint(string $key): string
+{
+    return strlen($key) >= 12 ? substr($key, -4) : '';
+}
+
 // Returns [array $errors, array $clean]. $isNew allows setting the slug.
 function tenant_validate(array $in, bool $isNew): array
 {

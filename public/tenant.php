@@ -43,19 +43,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($postId === 0) {
                     $key = tenant_new_api_key();
                     $st = $pdo->prepare(
-                        'INSERT INTO cp_tenants (slug, name, business_type, modules, domain, plan, monthly_fee, currency, paid_until, grace_days, readonly_days, api_key_hash, notes)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                        'INSERT INTO cp_tenants (slug, name, business_type, modules, domain, plan, monthly_fee, currency, paid_until, grace_days, readonly_days, api_key_hash, api_key_hint, notes)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                     );
                     $st->execute([
                         $clean['slug'], $clean['name'], $clean['business_type'], $clean['modules_json'], $clean['domain'], $clean['plan'], $clean['monthly_fee'],
                         $clean['currency'], $clean['paid_until'], $clean['grace_days'], $clean['readonly_days'],
-                        password_hash($key, PASSWORD_BCRYPT, ['cost' => 10]), $clean['notes'],
+                        password_hash($key, PASSWORD_BCRYPT, ['cost' => 10]), tenant_key_hint($key), $clean['notes'],
                     ]);
                     $newId = (int)$pdo->lastInsertId();
                     audit_log($pdo, $adminId, 'tenant_create', $newId, null, tenant_find($pdo, $newId));
                     $pdo->commit();
                     $_SESSION['new_key'] = [$newId, $key];
-                    flash_set('ok', 'Business added. Copy the API key below now: it is shown only once.');
+                    flash_set('ok', 'Business added. Copy the licence key (API key) below now: it is shown only once.');
                     back_to($newId);
                 }
                 $before = tenant_find($pdo, $postId, true);
@@ -160,12 +160,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 back_to(0);
             }
             $key = tenant_new_api_key();
-            $pdo->prepare('UPDATE cp_tenants SET api_key_hash = ? WHERE id = ?')
-                ->execute([password_hash($key, PASSWORD_BCRYPT, ['cost' => 10]), $postId]);
+            $pdo->prepare('UPDATE cp_tenants SET api_key_hash = ?, api_key_hint = ? WHERE id = ?')
+                ->execute([password_hash($key, PASSWORD_BCRYPT, ['cost' => 10]), tenant_key_hint($key), $postId]);
             audit_log($pdo, $adminId, 'api_key_regenerated', $postId, ['key_set' => $before['api_key_hash'] !== null], ['key_set' => true]);
             $pdo->commit();
             $_SESSION['new_key'] = [$postId, $key];
-            flash_set('ok', 'New API key created. The old key no longer works. Copy the new key now: it is shown only once.');
+            flash_set('ok', 'New licence key (API key) created. The old key no longer works. Copy the new key now: it is shown only once.');
             back_to($postId);
         } else {
             http_response_code(400);
@@ -238,8 +238,8 @@ if ($tenant) {
     echo '</section>';
 
     if ($shownKey !== null) {
-        echo '<section class="card key"><h2>API key (shown once)</h2>'
-            . '<p>Copy this into the customer system now. It cannot be shown again; if lost, generate a new one.</p>'
+        echo '<section class="card key"><h2>Licence key (API key), shown once</h2>'
+            . '<p>Copy this now. Put it in the business\'s settings file (<code>LICENCE_KEY=</code>), or the business\'s admin can paste it on their <strong>Licence</strong> page (Change licence key). It cannot be shown again; if lost, generate a new one.</p>'
             . '<p><code class="keybox">' . e($shownKey) . '</code></p>'
             . '<p class="muted">Short name to use with it: <code>' . e($tenant['slug']) . '</code></p></section>';
     }
@@ -311,12 +311,14 @@ echo '<label>Website domain (must match what the customer system reports)<input 
     . '<button type="submit">' . ($tenant ? 'Save details' : 'Add business') . '</button></form></section>';
 
 if ($tenant) {
-    echo '<section class="card"><h2>API key</h2>'
-        . '<p class="muted">' . ($tenant['api_key_hash'] ? 'A key is set. It cannot be displayed.' : 'No key set; the business cannot check in.')
-        . ' Generating a new key stops the old one working immediately; update the customer system straight after.</p>'
+    $hint = (string)($tenant['api_key_hint'] ?? '');
+    echo '<section class="card"><h2>Licence key (API key)</h2>'
+        . '<p>' . (!$tenant['api_key_hash'] ? 'No key set; the business cannot check in.'
+            : ($hint !== '' ? 'Ends in <code>…' . e($hint) . '</code>. It should match the end of the key in that business\'s settings file or on its Licence page.' : 'A key is set.')) . '</p>'
+        . '<p class="muted">The full key is never stored here (only a scrambled copy), so it cannot be shown again. Generating a new key stops the old one working immediately; give the new one to the business straight after.</p>'
         . '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '">' . csrf_field()
         . '<input type="hidden" name="action" value="regen_key"><input type="hidden" name="id" value="' . (int)$tenant['id'] . '">'
-        . '<button type="submit" class="danger">Generate new API key</button></form></section>';
+        . '<button type="submit" class="danger">Generate new licence key</button></form></section>';
 
     $pay = $pdo->prepare('SELECT * FROM cp_payments WHERE tenant_id = ? ORDER BY id DESC LIMIT 10');
     $pay->execute([(int)$tenant['id']]);
