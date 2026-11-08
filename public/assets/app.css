@@ -64,3 +64,48 @@ table.list td.col-plan .trunc { max-width: 18ch; }
 form fieldset.modules { border: 1px solid #b8bec8; border-radius: 4px; margin: 0 0 .75rem; padding: .5rem .75rem; max-width: 480px; }
 form fieldset.modules legend { font-weight: 600; padding: 0 .25rem; }
 form label.check { display: block; margin: .25rem 0; font-weight: 400; }
+
+/* Billing (2026-11-09): invoices, quotations, statements, settings. */
+.num { text-align: right; }
+.pre { white-space: pre-line; }
+a.button { display: inline-block; font: inherit; padding: .55rem 1rem; border-radius: 4px; background: #1d4f91; color: #fff; text-decoration: none; }
+a.button:hover { background: #163e73; }
+a.button.secondary { background: #5b6675; }
+.bill-stats { display: flex; flex-wrap: wrap; gap: .75rem 2rem; margin: 0 0 .5rem; }
+.bill-stats p { margin: 0; display: flex; flex-direction: column; }
+.bill-stats p span { font-size: .8rem; }
+.bill-stats strong { font-size: 1.15rem; }
+.bill-overdue, td.bill-overdue { color: #a12626; }
+.bill-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .75rem 0 0; }
+.bill-actions form.inline { display: inline-block; }
+.bill-links a { margin-right: 1rem; }
+.tabs { display: flex; flex-wrap: wrap; gap: .25rem; border-bottom: 1px solid #d9dde3; margin: 0 0 1rem; }
+.tabs a { padding: .5rem 1rem; text-decoration: none; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; color: #1d4f91; }
+.tabs a.active { background: #fff; border-color: #d9dde3; color: #1c2430; font-weight: 600; margin-bottom: -1px; }
+form.bill-filter { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: flex-end; margin: 0 0 1rem; }
+form.bill-filter label { margin: 0; }
+form.bill-filter select, form.bill-filter input { min-width: 12rem; }
+.bill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0 1.25rem; }
+.bill-grid label small { display: block; font-weight: 400; }
+.bill-editor h2 { margin-top: .75rem; }
+table.bill-lines td { vertical-align: top; }
+table.bill-lines input, table.bill-lines textarea { margin-top: 0; max-width: none; }
+table.bill-lines .in-qty { width: 5rem; }
+table.bill-lines .in-item { min-width: 12rem; }
+table.bill-lines .in-desc { min-width: 16rem; }
+table.bill-lines .in-price { width: 9rem; text-align: right; }
+table.bill-lines .in-qty { text-align: right; }
+.bill-add { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin: .75rem 0 1rem; }
+form label.inline-label { display: inline-block; margin: 0; font-weight: 400; }
+form label.inline-label select, form label.inline-label input { display: inline-block; width: auto; min-width: 5rem; margin: 0 0 0 .35rem; }
+.bill-totals { margin: .5rem 0 1rem auto; max-width: 340px; }
+.bill-totals p { display: flex; justify-content: space-between; gap: 1rem; margin: .15rem 0; }
+.bill-totals p.grand { border-top: 1px solid #b8bec8; padding-top: .25rem; font-size: 1.05rem; }
+form.bill-item-form { margin-top: .5rem; }
+details summary { cursor: pointer; color: #1d4f91; }
+h2.spaced { margin-top: 1rem; }
+@media (max-width: 640px) {
+  .bill-totals { max-width: none; }
+  table.bill-lines .in-qty, table.bill-lines .in-price, table.bill-lines .in-item, table.bill-lines .in-desc { width: 100%; min-width: 0; }
+  form.bill-filter select, form.bill-filter input { min-width: 0; }
+}

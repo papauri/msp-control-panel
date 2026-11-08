@@ -39,17 +39,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $form = $clean;
             $form['monthly_fee'] = $_POST['monthly_fee'] ?? '';
             if (!$errors) {
+                $nul = static fn(string $v): ?string => $v === '' ? null : $v;
                 $pdo->beginTransaction();
                 if ($postId === 0) {
                     $key = tenant_new_api_key();
                     $st = $pdo->prepare(
-                        'INSERT INTO cp_tenants (slug, name, business_type, modules, domain, plan, monthly_fee, currency, paid_until, grace_days, readonly_days, api_key_hash, api_key_hint, notes)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                        'INSERT INTO cp_tenants (slug, name, business_type, modules, domain, plan, monthly_fee, currency, paid_until, grace_days, readonly_days, api_key_hash, api_key_hint, notes,
+                            contact_name, billing_email, cc_emails, contact_phone, billing_address)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                     );
                     $st->execute([
                         $clean['slug'], $clean['name'], $clean['business_type'], $clean['modules_json'], $clean['domain'], $clean['plan'], $clean['monthly_fee'],
                         $clean['currency'], $clean['paid_until'], $clean['grace_days'], $clean['readonly_days'],
                         password_hash($key, PASSWORD_BCRYPT, ['cost' => 10]), tenant_key_hint($key), $clean['notes'],
+                        $nul($clean['contact_name']), $nul($clean['billing_email']), $nul($clean['cc_emails']), $nul($clean['contact_phone']), $nul($clean['billing_address']),
                     ]);
                     $newId = (int)$pdo->lastInsertId();
                     audit_log($pdo, $adminId, 'tenant_create', $newId, null, tenant_find($pdo, $newId));
@@ -65,11 +68,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $st = $pdo->prepare(
                     'UPDATE cp_tenants SET name=?, business_type=?, modules=?, domain=?, plan=?, monthly_fee=?, currency=?, paid_until=?,
-                        grace_days=?, readonly_days=?, notes=? WHERE id=?'
+                        grace_days=?, readonly_days=?, notes=?, contact_name=?, billing_email=?, cc_emails=?, contact_phone=?, billing_address=? WHERE id=?'
                 );
                 $st->execute([
                     $clean['name'], $clean['business_type'], $clean['modules_json'], $clean['domain'], $clean['plan'], $clean['monthly_fee'], $clean['currency'],
-                    $clean['paid_until'], $clean['grace_days'], $clean['readonly_days'], $clean['notes'], $postId,
+                    $clean['paid_until'], $clean['grace_days'], $clean['readonly_days'], $clean['notes'],
+                    $nul($clean['contact_name']), $nul($clean['billing_email']), $nul($clean['cc_emails']), $nul($clean['contact_phone']), $nul($clean['billing_address']), $postId,
                 ]);
                 audit_log($pdo, $adminId, 'tenant_update', $postId, $before, tenant_find($pdo, $postId));
                 $pdo->commit();
@@ -244,8 +248,43 @@ if ($tenant) {
             . '<p class="muted">Short name to use with it: <code>' . e($tenant['slug']) . '</code></p></section>';
     }
 
+    // Billing (2026-11-09): what this business owes on sent invoices.
+    $bill = billing_tenant_summary($pdo, (int)$tenant['id']);
+    $tid = (int)$tenant['id'];
+    echo '<section class="card"><h2>Billing</h2><div class="bill-stats">'
+        . '<p><span class="muted">Owed</span><strong>' . e(billing_money($bill['owed'], $bill['currency'])) . '</strong></p>'
+        . '<p><span class="muted">Overdue</span><strong' . ($bill['overdue'] > BILLING_TOLERANCE ? ' class="bill-overdue"' : '') . '>'
+        . e(billing_money($bill['overdue'], $bill['currency'])) . '</strong></p>'
+        . '<p><span class="muted">Last payment</span><strong>' . ($bill['last_payment']
+            ? e(billing_money((float)$bill['last_payment']['amount'], (string)$bill['last_payment']['currency'])) . ' <span class="muted">on ' . e(billing_date(substr((string)$bill['last_payment']['created_at'], 0, 10))) . '</span>'
+            : view_empty()) . '</strong></p></div>'
+        . (!empty($bill['other']) ? '<p class="muted">Also owed: ' . e(implode(', ', array_map(static fn($c, $v) => billing_money((float)$v['owed'], (string)$c), array_keys($bill['other']), $bill['other']))) . ' (each currency is billed separately).</p>' : '');
+    if ($bill['open']) {
+        echo '<div class="scroll"><table><thead><tr>'
+            . view_th('Invoice', 'Invoice number.') . view_th('Date', 'Date of the invoice.') . view_th('Due', 'Due date.')
+            . view_th('Balance', 'Still to pay on this invoice.') . '</tr></thead><tbody>';
+        foreach ($bill['open'] as $d) {
+            echo '<tr><td data-label="Invoice"><a href="document.php?id=' . (int)$d['id'] . '">' . e($d['number']) . '</a></td>'
+                . '<td data-label="Date" class="nw">' . e(billing_date($d['issue_date'])) . '</td>'
+                . '<td data-label="Due" class="nw">' . e(billing_date($d['due_date'])) . ($d['is_overdue'] ? ' <span class="pill pill-suspended">Overdue</span>' : '') . '</td>'
+                . '<td data-label="Balance" class="nw num">' . e(billing_money($d['balance'], $d['currency'])) . '</td></tr>';
+        }
+        echo '</tbody></table></div>';
+    } else {
+        echo '<p class="muted">No unpaid invoices.</p>';
+    }
+    echo '<p class="bill-links"><a href="document.php?new=invoice&amp;tenant=' . $tid . '">New invoice</a>'
+        . '<a href="document.php?new=quote&amp;tenant=' . $tid . '">New quotation</a>'
+        . '<a href="statement.php?tenant=' . $tid . '">Statement</a>'
+        . '<a href="invoices.php?tenant=' . $tid . '">All invoices</a></p>';
+    if (($tenant['billing_email'] ?? '') === '') {
+        echo '<p class="muted">No billing email yet: add one under Details so invoices and reminders can be emailed.</p>';
+    }
+    echo '</section>';
+
     echo '<section class="card"><h2>Record payment</h2>'
-        . '<p class="muted">Extends "paid until" from today or the current paid-until date, whichever is later.</p>'
+        . '<p class="muted">Extends "paid until" from today or the current paid-until date, whichever is later. '
+        . 'For money against an invoice, use Record payment on the invoice instead.</p>'
         . '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '">' . csrf_field()
         . '<input type="hidden" name="action" value="payment"><input type="hidden" name="id" value="' . (int)$tenant['id'] . '">'
         . '<label>Months paid<input type="number" name="months" min="1" max="60" value="1" required></label>'
@@ -307,6 +346,13 @@ echo '<label>Website domain (must match what the customer system reports)<input 
     . '<label>Paid until (YYYY-MM-DD; use Record payment to extend)<input type="date" name="paid_until" required value="' . e($v('paid_until')) . '"></label>'
     . '<label>Grace days (banner shown, everything works)<input type="number" name="grace_days" min="0" max="365" required value="' . e($v('grace_days', '14')) . '"></label>'
     . '<label>Read-only days (view, check-out and export only)<input type="number" name="readonly_days" min="0" max="365" required value="' . e($v('readonly_days', '14')) . '"></label>'
+    . '<fieldset class="modules"><legend>Billing contact (invoices, reminders and statements go here)</legend>'
+    . '<label>Contact name<input type="text" name="contact_name" maxlength="120" value="' . e($v('contact_name')) . '"></label>'
+    . '<label>Billing email<input type="email" name="billing_email" maxlength="190" value="' . e($v('billing_email')) . '"></label>'
+    . '<label>Copy to (other emails, separated by commas)<input type="text" name="cc_emails" maxlength="500" value="' . e($v('cc_emails')) . '"></label>'
+    . '<label>Phone<input type="text" name="contact_phone" maxlength="60" value="' . e($v('contact_phone')) . '"></label>'
+    . '<label>Billing address (printed on invoices)<textarea name="billing_address" rows="3" maxlength="1000">' . e($v('billing_address')) . '</textarea></label>'
+    . '</fieldset>'
     . '<label>Notes<textarea name="notes" rows="3" maxlength="2000">' . e($v('notes')) . '</textarea></label>'
     . '<button type="submit">' . ($tenant ? 'Save details' : 'Add business') . '</button></form></section>';
 

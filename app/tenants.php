@@ -77,6 +77,26 @@ function tenant_validate(array $in, bool $isNew): array
         $err[] = 'Monthly fee must be a number, for example 150000 or 150000.50.';
     }
     $clean['monthly_fee'] = $fee === '' ? '0' : $fee;
+    // Billing contact (2026-11-09). All optional; empty values are stored as NULL.
+    $clean['contact_name'] = $s('contact_name', 120);
+    $clean['billing_email'] = $s('billing_email', 190);
+    $clean['contact_phone'] = $s('contact_phone', 60);
+    $clean['billing_address'] = str_replace("\r\n", "\n", $s('billing_address', 1000));
+    if ($clean['billing_email'] !== '' && !filter_var($clean['billing_email'], FILTER_VALIDATE_EMAIL)) {
+        $err[] = 'Billing email is not a valid email address.';
+    }
+    $cc = [];
+    foreach (preg_split('/[\s,;]+/', $s('cc_emails', 500)) as $addr) {
+        if ($addr === '') {
+            continue;
+        }
+        if (!filter_var($addr, FILTER_VALIDATE_EMAIL)) {
+            $err[] = 'Copy-to email is not a valid email address: ' . $addr;
+            continue;
+        }
+        $cc[strtolower($addr)] = $addr;
+    }
+    $clean['cc_emails'] = mb_substr(implode(', ', $cc), 0, 500);
     foreach (['grace_days' => 'Grace days', 'readonly_days' => 'Read-only days'] as $k => $label) {
         $v = isset($in[$k]) && is_string($in[$k]) ? trim($in[$k]) : '';
         if (!preg_match('/^\d{1,3}$/', $v) || (int)$v > 365) {
