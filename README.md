@@ -6,13 +6,22 @@ Private panel for recording who has paid for the hotel PMS. Each PMS calls `api/
 
 1. Upload the whole folder to, for example, `/home/USER/msp-control-panel/` (not inside public_html).
 2. Create a subdomain (for example `licence.yourdomain.com`) and set its **document root to `/home/USER/msp-control-panel/public`**. Only `public/` is web-visible; `app/`, `keys/`, `.env`, `logs/`, `storage/` must stay above it. Enable the free AutoSSL certificate and use HTTPS only.
-3. Create a MySQL database and user in cPanel (or, temporarily, share another database: all panel tables are prefixed `cp_` so they cannot clash; `php scripts/export-db.php` writes an offline export to the git-ignored `database/` folder for the later move, see `database/README.txt` locally). Copy `.env.example` to `.env`, fill in `DB_*`, `APP_URL`. `chmod 600 .env`.
+3. Create a MySQL database and user in cPanel (or, temporarily, share another database: all panel tables are prefixed `cp_` so they cannot clash. To move them later: Backups page > Download the panel's database (or `php scripts/export-db.php`, which writes to the git-ignored `database/` folder), import it into the new database in phpMyAdmin, change `DB_*` in `.env`. Step by step: Guide section 14 / EMERGENCY.md G). Copy `.env.example` to `.env`, fill in `DB_*`, `APP_URL`. `chmod 600 .env`.
 4. Run migrations (SSH or cPanel Terminal): `php scripts/migrate.php`. (Or paste `migrations/001_schema.sql` into phpMyAdmin.)
 5. Make the signing key: `php scripts/make-keys.php`. It writes `keys/licence-private.pem` (chmod 600, outside `public/`) and prints the **public key**. Put the absolute path in `.env` as `PRIVATE_KEY_PATH`. Back the private key up offline. If it is lost, every PMS must be given a new public key.
-6. Create your login: `php scripts/create-admin.php you@example.com`. Add the printed TOTP secret to an authenticator app (manual entry). There is no web sign-up.
+6. Create your login: `php scripts/create-admin.php you@example.com`. Add the printed TOTP secret to an authenticator app (manual entry). There is no web sign-up; further users are added by an admin on the Users page.
 7. Sign in at the subdomain, add each hotel, copy its API key (shown once) into that hotel's `.env`.
+8. Recommended: a daily cron job for backups (cPanel > Cron Jobs, once a day): `cd /home/USER/msp-control-panel && php scripts/backup-all.php >> logs/backup-cron.log 2>&1`. Without it the daily backup starts at the first sign-in of the day.
 
-No cron job is needed. Rate limits and sessions clean themselves up.
+Rate limits and sessions clean themselves up.
+
+## Users
+
+Email is the username (no separate username column). Any admin adds a user (email + temporary password) on the Users page; the new person's first sign-in (code left empty) opens a 15-minute setup session that never carries `admin_id`: they add the shown key to an authenticator app, prove it with a code and choose their own password (`setup.php`). Reset gives a new temporary password and empties the 2-step secret (setup again); remove deletes the row (never yourself, never the last admin). Every add/reset/remove needs the acting admin's password + a fresh code and is audited. Sessions carry a fingerprint of the account's password hash + stored secret, so any reset or password change signs out other sessions. No e-mail reset (the panel has no mailer): `php scripts/reset-password.php EMAIL` and `php scripts/reset-2fa.php EMAIL` are the server-side ways back in.
+
+## Backups
+
+Each business backs itself up on its own server (its PMS backup engine); the panel only asks and watches, so no client data reaches the panel. The panel puts `backup_requested_at` in the signed licence answer; the PMS runs its backup after its reply (at most once per 6 hours) and reports `{last_at, size, error_at, error_code, offsite_at, requested_seen}` (numbers and a code only) in its next check-in. A run happens on the first sign-in of the day, the Backups page button, or `scripts/backup-all.php` (cron). Each run also writes the panel's own `cp_` tables to `storage/backups/panel-*.cpbk`: gzip + AES-256-GCM with a key derived from the signing key (HKDF label `cp-backup-v1`), newest 14 kept. Request/report state lives in `storage/backup-state.json` (no schema change).
 
 ## Security notes
 
@@ -26,7 +35,7 @@ No cron job is needed. Rate limits and sessions clean themselves up.
 
 ## Tests
 
-`php scripts/tests/status_test.php` and `totp_test.php`, `signing_test.php`, `verifier_test.php`, `catalog_test.php`, `security_test.php`. No database needed.
+`php scripts/tests/status_test.php` and `totp_test.php`, `signing_test.php`, `verifier_test.php`, `catalog_test.php`, `security_test.php`, `backup_users_test.php`. No database needed.
 
 ## Business types and modules
 

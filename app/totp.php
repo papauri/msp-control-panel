@@ -88,7 +88,7 @@ const TOTP_SEALED_LEN = 64;
 
 function totp_secret_is_sealed(string $stored): bool
 {
-    return strlen($stored) === TOTP_SEALED_LEN && preg_match('#^[A-Za-z0-9+/]{64}$#', $stored) === 1;
+    return strlen($stored) === TOTP_SEALED_LEN && preg_match('#^[A-Za-z0-9+/]{64}$#D', $stored) === 1;
 }
 
 /** Seals a base32 secret with a 32-byte key. Null unless the result fits the column and opens back to the same secret. */

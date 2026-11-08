@@ -153,7 +153,8 @@ view_head('Guide');
     <li>After 5 wrong tries from the same place, sign-in with that email is blocked <strong>from that place only</strong> for up to 15 minutes. Your account is never locked, so you can still sign in from another network (for example your phone's mobile data).</li>
     <li>Your phone clock must be set to automatic. If the time is wrong, the 6-digit code will not work.</li>
 </ul>
-<p class="muted">If something goes wrong: wait 15 minutes, then sign in again. If your code is still not accepted, see 12 F.</p>
+<p><strong>First sign-in</strong> (you were just added, or an admin reset you): type your email and the temporary password you were given and leave the code empty. The next page shows a key to add to your authenticator app; type the code it shows and choose your own password. You have 15 minutes to finish. See section 15.</p>
+<p class="muted">If something goes wrong: wait 15 minutes, then sign in again. Forgot your password or lost your phone? Ask another admin to reset you on the <strong>Users</strong> page. If you are the only admin, see 12 F.</p>
 
 <h2>10. Moving to a real domain</h2>
 <p>When a business moves its website to a new address, update the licence the same day.</p>
@@ -215,14 +216,16 @@ view_head('Guide');
 <h3>C. The panel's records are lost (database)</h3>
 <ol>
     <li>cPanel &rarr; <strong>phpMyAdmin</strong> &rarr; click the database the panel uses (its name is on the <code>DB_NAME</code> line of the panel's .env).</li>
-    <li>Click <strong>Import</strong> &rarr; <strong>Choose File</strong> &rarr; pick your newest panel backup file (see D) &rarr; <strong>Go</strong>.</li>
+    <li>Click <strong>Import</strong> &rarr; <strong>Choose File</strong> &rarr; pick your newest panel database file (see D) &rarr; <strong>Go</strong>.</li>
     <li>Open the panel and check your businesses are back.</li>
 </ol>
+<p class="muted">No downloaded file, but the panel still opens? <strong>Backups</strong> &rarr; Download the panel's database &rarr; choose one of the dated backups kept on the server.</p>
 
 <h3>D. Backups to keep (do these now, and after big changes)</h3>
 <ol>
     <li><strong>Signing key and settings</strong> (once, and again if you change the panel's settings): open <strong>Signing key</strong> in the top menu, enter your password and a new 6-digit code, click <strong>Download backup</strong>. One file holds the private key, the public key and the panel's settings file. Keep it on a USB stick or in your password manager. Never email it. <em>The key is the one thing that cannot be made again.</em> (If the panel will not open: cPanel &rarr; File Manager &rarr; <em>msp-control-panel/keys</em> &rarr; right-click <strong>licence-private.pem</strong> &rarr; <strong>Download</strong>, and the same for <em>.env</em>.)</li>
-    <li><strong>Panel records</strong> (after recording payments): cPanel &rarr; <strong>phpMyAdmin</strong> &rarr; the panel's database &rarr; <strong>Export</strong> &rarr; <strong>Custom</strong> &rarr; under Tables, tick only the tables that start with <code>cp_</code> &rarr; <strong>Go</strong>. Keep the downloaded file with the key.</li>
+    <li><strong>Panel records</strong> (after recording payments): <strong>Backups</strong> &rarr; Download the panel's database &rarr; <em>As it is right now</em>, with your password and a new code. Keep the file with the key, offline. (If the panel will not open: cPanel &rarr; <strong>phpMyAdmin</strong> &rarr; the panel's database &rarr; <strong>Export</strong> &rarr; <strong>Custom</strong> &rarr; tick only the tables that start with <code>cp_</code> &rarr; <strong>Go</strong>.)</li>
+    <li>The panel also keeps its own encrypted copies on the server every day (section 13). Those protect against a mistake, not against losing the server: the offline file above does that.</li>
 </ol>
 
 <h3>E. Moving this panel to a new web address</h3>
@@ -237,7 +240,72 @@ view_head('Guide');
     <li>Check your phone's clock is set to automatic, wait for a new code, and try once more.</li>
     <li>Tried 5 times? Wait 15 minutes, or sign in from another network (for example your phone's mobile data).</li>
     <li>Still not working: check <em>msp-control-panel/keys/licence-private.pem</em> is there (12 B). Your codes are protected with it; put it back from your offline backup if it is missing.</li>
-    <li>Lost the phone, or the key with no backup? cPanel &rarr; <strong>Terminal</strong> &rarr; type <code>cd msp-control-panel</code>, then <code>php scripts/reset-2fa.php you@example.com</code> (your sign-in email). It prints a new secret: add it to your authenticator app by hand and delete the old entry. Your password does not change.</li>
+    <li>Lost the phone? Another admin can reset you on the <strong>Users</strong> page. If you are the only admin, or the key is lost with no backup: cPanel &rarr; <strong>Terminal</strong> &rarr; type <code>cd msp-control-panel</code>, then <code>php scripts/reset-2fa.php you@example.com</code> (your sign-in email). It prints a new secret: add it to your authenticator app by hand and delete the old entry. Your password does not change.</li>
+    <li>Forgot your password and you are the only admin? Same Terminal, then <code>php scripts/reset-password.php you@example.com</code>. It asks for a new password; your 6-digit codes stay as they are.</li>
 </ol>
+
+<h2 id="backups">13. Backups</h2>
+<p>Every business backs <strong>itself</strong> up, on its own server, with its own backup system (its <em>Backup management</em> page). This panel <strong>asks</strong> for those backups and shows what each business reports. Your clients' data never comes to this panel: only the date of the last backup, its size, whether it worked, and when someone last downloaded a copy.</p>
+<ol>
+    <li><strong>Every day by itself:</strong> the first admin to sign in each day starts the backup. You see "Today's backup has started".</li>
+    <li><strong>One button:</strong> <strong>Backups</strong> &rarr; <strong>Back up everything now</strong>. Or <strong>Back up now</strong> on one business's row.</li>
+    <li><strong>Every night, even when nobody signs in</strong> (recommended): cPanel &rarr; <strong>Cron Jobs</strong> &rarr; <em>Once Per Day</em> &rarr; command:<br>
+        <code>cd /home/CPANELUSER/msp-control-panel &amp;&amp; php scripts/backup-all.php &gt;&gt; logs/backup-cron.log 2&gt;&amp;1</code><br>
+        (change CPANELUSER to your cPanel user name). It does the same as the button.</li>
+</ol>
+<p>Each run also backs up this panel's own records. Those copies are encrypted with the signing key, kept outside the website folder, and the newest 14 are kept.</p>
+<h3>Reading the Backups page</h3>
+<ul>
+    <li><strong>Backed up</strong>: the business's last good backup is less than 36 hours old.</li>
+    <li><strong>Asked; waiting</strong>: the business backs up at its next check-in, straight away when it is online, otherwise within the hour. A business that already has a good backup from the last 6 hours does not make another one, so pressing the button twice does not fill its disk.</li>
+    <li><strong>Last good backup is more than 36 hours old</strong> or <strong>Last backup failed</strong>: open that business's own <em>Backup management</em> page; it says what went wrong and what to do (often disk space).</li>
+    <li><strong>Copy kept off-site</strong>: when someone last downloaded a backup from that business's <em>Backup management</em> page. A backup on the same server does not survive the server being lost: download one regularly (weekly) and keep it somewhere else, encrypted.</li>
+    <li><strong>Nothing reported yet</strong>: the business has not checked in since this was added, or runs an older version of the system.</li>
+</ul>
+<p class="muted">Each business also has its own nightly backup. It is most reliable with its own cron job; see that system's backup guide.</p>
+
+<h2 id="move-database">14. Moving this panel to its own database</h2>
+<p>For now the panel's tables (all named <code>cp_...</code>) live in the Liwonde Sun database. Moving them to a database of their own takes about 10 minutes and nothing else changes.</p>
+<ol>
+    <li>cPanel &rarr; <strong>MySQL Databases</strong>: create a new database and a new user with a strong password; add the user to the database with <strong>All Privileges</strong>. Note the three names.</li>
+    <li>In this panel: <strong>Backups</strong> &rarr; Download the panel's database &rarr; <em>As it is right now</em>. Do this just before the move, so nothing recorded afterwards is lost. Open the file in a text editor and check its last line reads <code>-- complete: every table exported</code>; if not, download it again.</li>
+    <li>cPanel &rarr; <strong>phpMyAdmin</strong> &rarr; click the <strong>new</strong> database &rarr; <strong>Import</strong> &rarr; choose the file &rarr; <strong>Go</strong>.</li>
+    <li>cPanel &rarr; File Manager &rarr; <em>msp-control-panel/.env</em> &rarr; Edit: change <code>DB_NAME</code>, <code>DB_USER</code> and <code>DB_PASS</code> to the new ones &rarr; Save.</li>
+    <li>Sign in to the panel and check your businesses, payments and users are there. Press <strong>Back up everything now</strong> once.</li>
+    <li>Only when all is well, and a week later: in phpMyAdmin, in the <strong>Liwonde</strong> database, delete the tables that start with <code>cp_</code>. Never any other table.</li>
+</ol>
+<p><strong>Moving the panel to another server or domain too?</strong> Bring the whole <em>msp-control-panel</em> folder, including <em>keys/licence-private.pem</em> and <em>.env</em> (download them from the old server first). Without the signing key, the businesses would not trust the panel and your 6-digit codes would not work. Then follow 12 E for the new address.</p>
+
+<h2 id="users">15. Users and passwords</h2>
+<p>Everyone on the <strong>Users</strong> page can do everything in this panel. Each person signs in with their own email, password and 6-digit code.</p>
+<h3>Add a user</h3>
+<ol>
+    <li><strong>Users</strong> &rarr; Add a user: their email (it is their sign-in name) and a temporary password of at least 12 characters, then your own password and a new code to confirm.</li>
+    <li>Tell them the panel address, their email and the temporary password, by phone or in person (not in the same message as the address).</li>
+    <li>They sign in with the code box empty, add the panel to their authenticator app, and choose their own password (section 9). Until then they show as <em>Waiting for first sign-in</em>.</li>
+</ol>
+<h3>Reset or remove a user</h3>
+<ul>
+    <li><strong>Reset</strong> (forgotten password or lost phone): give them a new temporary password. They are signed out everywhere and set up again at their next sign-in.</li>
+    <li><strong>Remove</strong>: they can no longer sign in, and are signed out at once. What they did stays in the audit log. You cannot remove yourself or the last admin.</li>
+    <li><strong>Change your own password</strong>: <strong>My account</strong>. Other browsers signed in as you are signed out.</li>
+</ul>
+<p class="muted">Every add, reset and removal needs your own password and a new code, and is written in the audit log. There is no "forgot password" email: ask another admin, or see 12 F.</p>
+
+<h2 id="data-protection">16. Data protection</h2>
+<p>What the panel does to keep your clients' data safe:</p>
+<ul>
+    <li><strong>Data stays with each client.</strong> Backups are made and kept on each business's own server. This panel only holds the facts needed to run the licence: business name, website address, plan, payments, and the dates and sizes of their backups.</li>
+    <li><strong>Encrypted where it is stored.</strong> The panel's own backups and your 6-digit-code secrets are encrypted with the signing key. Passwords and licence keys are stored only as one-way hashes.</li>
+    <li><strong>Only named people get in</strong>, each with a password and a code from their own phone. Downloads of any backup need the password and a new code again.</li>
+    <li><strong>Everything is recorded</strong> in the audit log: sign-ins, users added or removed, every backup run and every download.</li>
+    <li><strong>Limited keeping.</strong> The panel keeps 14 of its own backups; each business keeps its own on a fixed schedule (14 daily, 8 weekly, 12 monthly) and deletes older ones by itself.</li>
+</ul>
+<p>What only you can do (the law asks for these, not the software):</p>
+<ul>
+    <li>A written <strong>data processing agreement</strong> with each client: you look after their system and backups on their behalf.</li>
+    <li>A short written <strong>retention policy</strong> (how long backups and records are kept) and a <strong>breach plan</strong> (who you tell, and how fast, if data is lost or exposed).</li>
+    <li>Make sure each business keeps an <strong>off-site copy</strong> (Backups page, last column), stored encrypted, and that only named people can open it.</li>
+</ul>
 <?php
 view_foot();

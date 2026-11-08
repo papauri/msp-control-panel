@@ -1,6 +1,7 @@
 <?php
 // Licence check-in endpoint. POST JSON only, no cookies, no sessions.
-// Request:  {"tenant": "<slug>", "domain": "<site host>", "key": "<api key>", "version": "<pms version>"}
+// Request:  {"tenant": "<slug>", "domain": "<site host>", "key": "<api key>", "version": "<pms version>", "backup": {...optional, its own backup state}}
+// The signed payload also carries backup_requested_at (2026-11-09): when the panel last asked this business to back up.
 // The signed payload also carries business_type and modules (licensed module keys) for the PMS to enforce.
 // Response: {"payload": base64url(JSON), "sig": base64url(DER ECDSA P-256/SHA-256 over the JSON bytes)}
 
@@ -109,6 +110,21 @@ if (!rate_limit_hit($pdo, 'lic-t:' . sha1((string)$tenant['id']), 30, 3600)) {
 
 $status = status_compute($tenant, status_today());
 $now = time();
+// What the business reports about its own backups (app/backup.php). Only after the key and domain matched.
+try {
+    $report = backup_clean_report($in['backup'] ?? null, $now);
+    if ($report !== null) {
+        backup_store_report((int)$tenant['id'], $report);
+    }
+} catch (Throwable $e) {
+    error_log('licence backup report: ' . $e->getMessage()); // never blocks the licence answer
+}
+$backupAsk = 0;
+try {
+    $backupAsk = backup_requested_at((int)$tenant['id']);
+} catch (Throwable $e) {
+    error_log('licence backup request: ' . $e->getMessage());
+}
 $payload = [
     'v' => 1,
     'tenant' => $tenant['slug'],
@@ -122,6 +138,7 @@ $payload = [
     'readonly_days' => (int)$tenant['readonly_days'],
     'issued_at' => $now,
     'valid_until' => $now + LICENCE_VALID_SECONDS,
+    'backup_requested_at' => $backupAsk,
 ];
 $token = signing_make_token($payload, $privateKey);
 if ($token === null) {

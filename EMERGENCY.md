@@ -51,8 +51,9 @@ That's it. The business works normally straight away: no banner, no locks, no ch
    *The key is the one thing that cannot be made again.*
 2. **If the panel will not open:** cPanel → File Manager → *msp-control-panel/keys* → right-click **licence-private.pem** →
    **Download**, and download *msp-control-panel/.env* the same way.
-3. **Panel records** (after recording payments): cPanel → **phpMyAdmin** → the panel's database → **Export** → **Custom** →
-   under Tables, tick only the tables that start with `cp_` → **Go**. Keep the downloaded file with the key.
+3. **Panel records** (after recording payments): in the panel open **Backups** → Download the panel's database → *As it is
+   right now*, with your password and a new code. Keep the file with the key, offline. If the panel will not open:
+   cPanel → **phpMyAdmin** → the panel's database → **Export** → **Custom** → tick only the tables that start with `cp_` → **Go**.
 
 ## E. Moving the panel to a new web address
 
@@ -68,6 +69,21 @@ That's it. The business works normally straight away: no banner, no locks, no ch
    block only the place they came from; your account itself is never locked.
 3. Still not working: check *msp-control-panel/keys/licence-private.pem* is there (see B). The secret behind your codes
    is stored encrypted with that key; put it back from your offline backup if it is missing.
-4. Lost the phone, or lost the key with no backup? cPanel → **Terminal** → type `cd msp-control-panel`, then
+4. Lost the phone? Another admin can reset you on the **Users** page. The only admin, or lost the key with no backup?
+   cPanel → **Terminal** → type `cd msp-control-panel`, then
    `php scripts/reset-2fa.php you@example.com` (your sign-in email). It prints a new secret: add it to your
    authenticator app by hand and delete the old entry. Your password does not change.
+5. Forgot your password and you are the only admin? Same Terminal, then `php scripts/reset-password.php you@example.com`.
+   It asks for a new password; your 6-digit codes stay as they are.
+
+## G. Moving the panel to its own database (it shares the Liwonde database for now)
+
+1. cPanel → **MySQL Databases**: create a new database and user (strong password); add the user with **All Privileges**.
+2. In the panel: **Backups** → Download the panel's database → *As it is right now* (just before the move).
+3. cPanel → **phpMyAdmin** → the **new** database → **Import** → choose the file → **Go**.
+4. File Manager → *msp-control-panel/.env* → Edit: change `DB_NAME`, `DB_USER`, `DB_PASS` to the new ones → Save.
+5. Sign in and check businesses, payments and users are there. Press **Back up everything now** once.
+6. Only when all is well, a week later: phpMyAdmin → the **Liwonde** database → delete only the tables starting with `cp_`.
+
+Moving to another server or domain as well? Take the whole *msp-control-panel* folder including *keys/licence-private.pem*
+and *.env*: without the signing key the businesses would not trust the panel and the 6-digit codes would not work. Then E.
