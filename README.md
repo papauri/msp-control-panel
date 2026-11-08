@@ -16,7 +16,9 @@ No cron job is needed. Rate limits and sessions clean themselves up.
 
 ## Security notes
 
-- Sign-in needs password + 6-digit code. 5 failures lock the account for 15 minutes; 10 attempts per 15 minutes per IP. Codes are single use. Idle timeout 30 minutes, absolute 12 hours.
+- Sign-in needs password + 6-digit code. 5 wrong tries for one email from one internet address block that email from that address for up to 15 minutes; the account itself is never locked, so nobody can lock the owner out by typing wrong passwords from elsewhere (unknown emails are counted the same way, so the block never shows which emails exist). 10 attempts per 15 minutes per IP. Codes are single use. Idle timeout 30 minutes, absolute 12 hours.
+- The 2-step secret is stored encrypted (AES-256-GCM, key derived from the signing key's private number), so a copy of the database alone cannot make sign-in codes. Older plain secrets keep working and are encrypted at the next sign-in. The signing key now also opens sign-in: keep its backup. No web login needed to recover: `php scripts/reset-2fa.php you@example.com` gives a new 2-step secret (password unchanged).
+- A new licence key is shown once. It is held in the session only for the redirect to its business page and is dropped on any other page, on a second view, and after 2 minutes.
 - Client IP is `REMOTE_ADDR` only. If you ever put a proxy in front, add trusted-proxy handling deliberately.
 - If the private key is missing or unreadable the endpoint answers 503 and never signs.
 - API keys are stored hashed. A lost key cannot be recovered, only replaced.
@@ -24,7 +26,7 @@ No cron job is needed. Rate limits and sessions clean themselves up.
 
 ## Tests
 
-`php scripts/tests/status_test.php` and `totp_test.php`, `signing_test.php`, `verifier_test.php`, `catalog_test.php`. No database needed.
+`php scripts/tests/status_test.php` and `totp_test.php`, `signing_test.php`, `verifier_test.php`, `catalog_test.php`, `security_test.php`. No database needed.
 
 ## Business types and modules
 

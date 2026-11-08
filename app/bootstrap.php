@@ -76,4 +76,27 @@ function web_boot(): void
     });
     send_security_headers();
     session_boot();
+    new_key_purge();
+}
+
+/**
+ * A new licence key is put in the session only to carry it across the redirect to its business page (2026-11-09):
+ * it is removed on any other page, on a second visit, and after 2 minutes, so it never sits in the session file.
+ * tenant.php reads it on that one GET and removes it straight after.
+ */
+const NEW_KEY_TTL_SECONDS = 120;
+
+function new_key_purge(): void
+{
+    if (!isset($_SESSION['new_key'])) {
+        return;
+    }
+    $nk = $_SESSION['new_key'];
+    $id = isset($_GET['id']) && ctype_digit((string)$_GET['id']) ? (int)$_GET['id'] : -1;
+    $fresh = is_array($nk) && count($nk) === 3 && time() - (int)$nk[2] <= NEW_KEY_TTL_SECONDS;
+    $here = basename((string)($_SERVER['SCRIPT_NAME'] ?? '')) === 'tenant.php' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET'
+        && is_array($nk) && $id === (int)($nk[0] ?? 0);
+    if (!$fresh || !$here) {
+        unset($_SESSION['new_key']);
+    }
 }

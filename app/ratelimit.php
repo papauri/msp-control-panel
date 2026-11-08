@@ -23,3 +23,26 @@ function rate_limit_hit(PDO $pdo, string $bucket, int $limit, int $windowSeconds
     }
     return $hits <= $limit;
 }
+
+// Failure counters (2026-11-09): read without adding, add only on a failure, clear on success. Same table and window
+// arithmetic as rate_limit_hit. Callers pass a hashed bucket name so long values are never cut and merged.
+
+function rate_limit_count(PDO $pdo, string $bucket, int $windowSeconds): int
+{
+    $windowStart = intdiv(time(), $windowSeconds) * $windowSeconds;
+    $sel = $pdo->prepare('SELECT hits FROM cp_rate_limits WHERE bucket = ? AND window_start = ?');
+    $sel->execute([substr($bucket, 0, 100), $windowStart]);
+    return (int)$sel->fetchColumn();
+}
+
+function rate_limit_add(PDO $pdo, string $bucket, int $windowSeconds): void
+{
+    $windowStart = intdiv(time(), $windowSeconds) * $windowSeconds;
+    $pdo->prepare('INSERT INTO cp_rate_limits (bucket, window_start, hits) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE hits = hits + 1')
+        ->execute([substr($bucket, 0, 100), $windowStart]);
+}
+
+function rate_limit_clear(PDO $pdo, string $bucket): void
+{
+    $pdo->prepare('DELETE FROM cp_rate_limits WHERE bucket = ?')->execute([substr($bucket, 0, 100)]);
+}

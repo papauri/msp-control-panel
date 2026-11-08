@@ -78,3 +78,55 @@ function totp_uri(string $secretB32, string $account, string $issuer): string
         . '?secret=' . $secretB32 . '&issuer=' . rawurlencode($issuer)
         . '&algorithm=SHA1&digits=6&period=30';
 }
+
+// ── Secret at rest (2026-11-09) ──────────────────────────────────────────────
+// cp_admins.totp_secret is VARCHAR(64). A sealed secret is base64(nonce 12 | AES-256-GCM ciphertext of the 20 raw
+// secret bytes | tag 16) = 48 bytes = exactly 64 characters. A plain (older) secret is 32 base32 characters, so the two
+// are told apart by length and alphabet; no prefix fits and the column is not widened (schema changes are the owner's).
+
+const TOTP_SEALED_LEN = 64;
+
+function totp_secret_is_sealed(string $stored): bool
+{
+    return strlen($stored) === TOTP_SEALED_LEN && preg_match('#^[A-Za-z0-9+/]{64}$#', $stored) === 1;
+}
+
+/** Seals a base32 secret with a 32-byte key. Null unless the result fits the column and opens back to the same secret. */
+function totp_seal(string $secretB32, string $key): ?string
+{
+    $raw = base32_decode_str($secretB32);
+    if ($raw === false || strlen($raw) !== 20 || strlen($key) !== 32) {
+        return null;
+    }
+    $nonce = random_bytes(12);
+    $tag = '';
+    $ct = openssl_encrypt($raw, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $nonce, $tag, '', 16);
+    if ($ct === false || strlen($tag) !== 16) {
+        return null;
+    }
+    $sealed = base64_encode($nonce . $ct . $tag);
+    if (strlen($sealed) !== TOTP_SEALED_LEN || totp_open($sealed, $key) !== base32_encode_str($raw)) {
+        return null; // never store anything that does not open again: a bad value would lock the admin out
+    }
+    return $sealed;
+}
+
+/**
+ * The base32 secret from what is stored: a plain (older) secret is returned as it is; a sealed one is opened with
+ * $key. Null when it is sealed and the key is missing, wrong, or the value was changed.
+ */
+function totp_open(string $stored, ?string $key): ?string
+{
+    if (!totp_secret_is_sealed($stored)) {
+        return $stored;
+    }
+    if ($key === null || strlen($key) !== 32) {
+        return null;
+    }
+    $bin = base64_decode($stored, true);
+    if ($bin === false || strlen($bin) !== 48) {
+        return null;
+    }
+    $raw = openssl_decrypt(substr($bin, 12, 20), 'aes-256-gcm', $key, OPENSSL_RAW_DATA, substr($bin, 0, 12), substr($bin, 32, 16));
+    return ($raw === false || strlen($raw) !== 20) ? null : base32_encode_str($raw);
+}

@@ -1,10 +1,10 @@
 <?php
-// Admin authentication: password + TOTP, lockout, rate limit, hardened session.
+// Admin authentication: password + TOTP, per-address lockout, rate limit, hardened session.
 
 const AUTH_IDLE_SECONDS = 1800;      // 30 min idle timeout
 const AUTH_MAX_SESSION_SECONDS = 43200; // 12 h absolute
-const AUTH_MAX_FAILURES = 5;
-const AUTH_LOCK_MINUTES = 15;
+const AUTH_MAX_FAILURES = 5;   // wrong tries per email + internet address ...
+const AUTH_LOCK_MINUTES = 15;   // ... per 15-minute window (the account itself is never locked)
 // Verified against when the e-mail is unknown, so timing does not reveal valid accounts.
 // Cost must match every password_hash() call (bcrypt cost 10) so unknown users verify in the same time.
 const AUTH_DUMMY_HASH = '$2y$10$mOZVDlz8IM98liPhXhrc0u9/sGkbkvddNirgPkZURGHGtKsGyQgD6';
@@ -55,6 +55,38 @@ function auth_destroy_session(): void
     }
 }
 
+/**
+ * Failed sign-ins are counted per email AND internet address (2026-11-09), never per account: someone who only knows
+ * the admin email cannot lock the admin out from elsewhere. Unknown emails are counted the same way, so the
+ * "too many tries" answer never shows which emails exist. Hashed so a long email or IPv6 address is never cut short.
+ */
+function auth_fail_bucket(string $email, string $ip): string
+{
+    return 'login-fail:' . hash('sha256', $email . '|' . $ip);
+}
+
+/** The usable base32 secret from the stored value (plain or sealed); null when sealed and the signing key cannot open it. */
+function auth_totp_secret(string $stored): ?string
+{
+    $secret = totp_open($stored, totp_secret_is_sealed($stored) ? keys_secret_box_key() : null);
+    if ($secret === null) {
+        error_log('auth: an admin 2-step secret is encrypted but the signing key is missing or is not the one it was sealed with. '
+            . 'Restore keys/licence-private.pem from the offline backup, or run php scripts/reset-2fa.php EMAIL.');
+    }
+    return $secret;
+}
+
+/** What to store after a good sign-in: a plain secret is sealed when the signing key is there (checked to open again). */
+function auth_totp_store_value(string $stored, string $secret): string
+{
+    if (totp_secret_is_sealed($stored)) {
+        return $stored;
+    }
+    $key = keys_secret_box_key();
+    $sealed = $key !== null ? totp_seal($secret, $key) : null;
+    return $sealed ?? $stored;
+}
+
 // Returns true on success. Every failure path is indistinguishable to the caller.
 function auth_attempt(PDO $pdo, string $email, string $password, string $code): bool
 {
@@ -66,26 +98,29 @@ function auth_attempt(PDO $pdo, string $email, string $password, string $code): 
     if (strlen($email) > 190 || strlen($password) > 1024) {
         return false;
     }
+    $failBucket = auth_fail_bucket($email, $ip);
+    if (rate_limit_count($pdo, $failBucket, AUTH_LOCK_MINUTES * 60) >= AUTH_MAX_FAILURES) {
+        usleep(random_int(150000, 350000));
+        return false; // this email from this address only; the admin can still sign in from anywhere else
+    }
 
-    $st = $pdo->prepare(
-        'SELECT id, email, password_hash, totp_secret,
-                (locked_until IS NOT NULL AND locked_until > NOW()) AS is_locked
-         FROM cp_admins WHERE email = ?'
-    );
+    $st = $pdo->prepare('SELECT id, email, password_hash, totp_secret FROM cp_admins WHERE email = ?');
     $st->execute([$email]);
     $admin = $st->fetch();
 
     $pwOk = password_verify($password, $admin ? $admin['password_hash'] : AUTH_DUMMY_HASH);
-    $step = $admin ? totp_verify($admin['totp_secret'], $code, time(), 1) : false;
+    $secret = $admin ? auth_totp_secret((string)$admin['totp_secret']) : null;
+    $step = $secret !== null ? totp_verify($secret, $code, time(), 1) : false;
 
-    if ($admin && !(int)$admin['is_locked'] && $pwOk && $step !== false) {
-        // Single-use codes: the step must be newer than the last one accepted.
+    if ($admin && $pwOk && $step !== false) {
+        // Single-use codes: the step must be newer than the last one accepted. A plain secret is sealed in the same write.
         $up = $pdo->prepare(
-            'UPDATE cp_admins SET totp_last_step = ?, failed_count = 0, locked_until = NULL, last_login_at = NOW()
+            'UPDATE cp_admins SET totp_last_step = ?, totp_secret = ?, failed_count = 0, locked_until = NULL, last_login_at = NOW()
              WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)'
         );
-        $up->execute([$step, (int)$admin['id'], $step]);
+        $up->execute([$step, auth_totp_store_value((string)$admin['totp_secret'], $secret), (int)$admin['id'], $step]);
         if ($up->rowCount() === 1) {
+            rate_limit_clear($pdo, $failBucket);
             session_regenerate_id(true);
             $_SESSION = [];
             $_SESSION['admin_id'] = (int)$admin['id'];
@@ -96,16 +131,7 @@ function auth_attempt(PDO $pdo, string $email, string $password, string $code): 
         }
     }
 
-    if ($admin && !(int)$admin['is_locked']) {
-        // locked_until is assigned first: MySQL evaluates SET left to right.
-        $f = $pdo->prepare(
-            'UPDATE cp_admins
-             SET locked_until = IF(failed_count + 1 >= ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), locked_until),
-                 failed_count = IF(failed_count + 1 >= ?, 0, failed_count + 1)
-             WHERE id = ?'
-        );
-        $f->execute([AUTH_MAX_FAILURES, AUTH_LOCK_MINUTES, AUTH_MAX_FAILURES, (int)$admin['id']]);
-    }
+    rate_limit_add($pdo, $failBucket, AUTH_LOCK_MINUTES * 60);
     audit_log($pdo, $admin ? (int)$admin['id'] : null, 'login_failed', null, null, null);
     usleep(random_int(150000, 350000));
     return false;
@@ -113,38 +139,30 @@ function auth_attempt(PDO $pdo, string $email, string $password, string $code): 
 
 /**
  * Re-confirms the SIGNED-IN admin with their password and a fresh 6-digit code before a sensitive action
- * (downloading the key backup). Same single-use code rule and lockout counter as sign-in; rate-limited.
+ * (downloading the key backup). Same single-use code rule as sign-in; rate-limited per admin (5 per 15 minutes).
+ * A wrong try here never locks the account.
  */
 function auth_reconfirm(PDO $pdo, int $adminId, string $password, string $code): bool
 {
     if (!rate_limit_hit($pdo, 'reconfirm:' . $adminId, 5, 900) || strlen($password) > 1024) {
         return false;
     }
-    $st = $pdo->prepare(
-        'SELECT id, password_hash, totp_secret, (locked_until IS NOT NULL AND locked_until > NOW()) AS is_locked
-         FROM cp_admins WHERE id = ?'
-    );
+    $st = $pdo->prepare('SELECT id, password_hash, totp_secret FROM cp_admins WHERE id = ?');
     $st->execute([$adminId]);
     $admin = $st->fetch();
-    if (!$admin || (int)$admin['is_locked']) {
+    if (!$admin) {
         return false;
     }
     $pwOk = password_verify($password, (string)$admin['password_hash']);
-    $step = totp_verify((string)$admin['totp_secret'], $code, time(), 1);
+    $secret = auth_totp_secret((string)$admin['totp_secret']);
+    $step = $secret !== null ? totp_verify($secret, $code, time(), 1) : false;
     if ($pwOk && $step !== false) {
-        $up = $pdo->prepare('UPDATE cp_admins SET totp_last_step = ?, failed_count = 0 WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)');
-        $up->execute([$step, $adminId, $step]);
+        $up = $pdo->prepare('UPDATE cp_admins SET totp_last_step = ?, totp_secret = ? WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)');
+        $up->execute([$step, auth_totp_store_value((string)$admin['totp_secret'], $secret), $adminId, $step]);
         if ($up->rowCount() === 1) {
             return true;
         }
     }
-    $f = $pdo->prepare(
-        'UPDATE cp_admins
-         SET locked_until = IF(failed_count + 1 >= ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), locked_until),
-             failed_count = IF(failed_count + 1 >= ?, 0, failed_count + 1)
-         WHERE id = ?'
-    );
-    $f->execute([AUTH_MAX_FAILURES, AUTH_LOCK_MINUTES, AUTH_MAX_FAILURES, $adminId]);
     audit_log($pdo, $adminId, 'reconfirm_failed', null, null, null);
     usleep(random_int(150000, 350000));
     return false;

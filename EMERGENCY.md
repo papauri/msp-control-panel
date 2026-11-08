@@ -34,6 +34,7 @@ That's it. The business works normally straight away: no banner, no locks, no ch
    - **.env** (the settings file). If it is missing, upload your saved copy.
    - **keys/licence-private.pem** (the signing key). If it is missing, upload your offline backup into the *keys* folder.
      **Do not** click "Create signing key" again: a new key would not match the businesses.
+     The key also protects your sign-in codes (see F): without it, your 6-digit code is not accepted.
 3. Page says it cannot reach the database? See C.
 
 ## C. The panel's records are lost (database)
@@ -59,3 +60,14 @@ That's it. The business works normally straight away: no banner, no locks, no ch
 2. For each business: cPanel → File Manager → that business's **.env** → Edit → change the `LICENCE_URL=` line to the
    new address, ending in `/api/licence.php` → Save.
 3. Open each business's **Licence** page and press **Check now** to confirm it connects.
+
+## F. Your 6-digit code is not accepted
+
+1. Check your phone's clock is set to automatic, wait for a new code, and try once more.
+2. Tried 5 times? Wait 15 minutes, or sign in from another network (for example your phone's mobile data). Wrong tries
+   block only the place they came from; your account itself is never locked.
+3. Still not working: check *msp-control-panel/keys/licence-private.pem* is there (see B). The secret behind your codes
+   is stored encrypted with that key; put it back from your offline backup if it is missing.
+4. Lost the phone, or lost the key with no backup? cPanel → **Terminal** → type `cd msp-control-panel`, then
+   `php scripts/reset-2fa.php you@example.com` (your sign-in email). It prints a new secret: add it to your
+   authenticator app by hand and delete the old entry. Your password does not change.

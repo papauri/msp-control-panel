@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $newId = (int)$pdo->lastInsertId();
                     audit_log($pdo, $adminId, 'tenant_create', $newId, null, tenant_find($pdo, $newId));
                     $pdo->commit();
-                    $_SESSION['new_key'] = [$newId, $key];
+                    $_SESSION['new_key'] = [$newId, $key, time()]; // carried across the redirect only (new_key_purge)
                     flash_set('ok', 'Business added. Copy the licence key (API key) below now: it is shown only once.');
                     back_to($newId);
                 }
@@ -164,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ->execute([password_hash($key, PASSWORD_BCRYPT, ['cost' => 10]), tenant_key_hint($key), $postId]);
             audit_log($pdo, $adminId, 'api_key_regenerated', $postId, ['key_set' => $before['api_key_hash'] !== null], ['key_set' => true]);
             $pdo->commit();
-            $_SESSION['new_key'] = [$postId, $key];
+            $_SESSION['new_key'] = [$postId, $key, time()]; // carried across the redirect only (new_key_purge)
             flash_set('ok', 'New licence key (API key) created. The old key no longer works. Copy the new key now: it is shown only once.');
             back_to($postId);
         } else {
@@ -197,12 +197,12 @@ if ($id > 0 && !$tenant) {
     exit;
 }
 
-// One-time API key display (consumed on first render).
+// One-time API key display: web_boot() already dropped it unless this is the first GET of this business within 2 minutes.
 $shownKey = null;
-if ($tenant && isset($_SESSION['new_key']) && (int)$_SESSION['new_key'][0] === (int)$tenant['id']) {
-    $shownKey = $_SESSION['new_key'][1];
+if ($tenant && $_SERVER['REQUEST_METHOD'] === 'GET' && isset($_SESSION['new_key']) && (int)$_SESSION['new_key'][0] === (int)$tenant['id']) {
+    $shownKey = (string)$_SESSION['new_key'][1];
 }
-unset($_SESSION['new_key']);
+unset($_SESSION['new_key']); // the session is saved without it at the end of this page
 
 $v = function (string $k, $default = '') use ($form, $tenant) {
     if (is_array($form) && array_key_exists($k, $form)) {

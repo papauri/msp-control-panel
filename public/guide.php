@@ -150,10 +150,10 @@ view_head('Guide');
     <li>Open your authenticator app and type the current <strong>6-digit code</strong>.</li>
 </ol>
 <ul>
-    <li>After 5 wrong tries, the account is locked for 15 minutes.</li>
+    <li>After 5 wrong tries from the same place, sign-in with that email is blocked <strong>from that place only</strong> for up to 15 minutes. Your account is never locked, so you can still sign in from another network (for example your phone's mobile data).</li>
     <li>Your phone clock must be set to automatic. If the time is wrong, the 6-digit code will not work.</li>
 </ul>
-<p class="muted">If something goes wrong: wait 15 minutes, then sign in again. Ask another admin if you are still locked out.</p>
+<p class="muted">If something goes wrong: wait 15 minutes, then sign in again. If your code is still not accepted, see 12 F.</p>
 
 <h2>10. Moving to a real domain</h2>
 <p>When a business moves its website to a new address, update the licence the same day.</p>
@@ -172,6 +172,7 @@ view_head('Guide');
     <li>Copy the <strong>Public key</strong> shown on the page (all of it). It goes into the business system's code. It is not secret.</li>
     <li>Back up the key: on the same page, enter your password and a new 6-digit code and click <strong>Download backup</strong>. Keep the file offline. Never email it.</li>
 </ol>
+<p>The key also protects your sign-in: the secret behind your 6-digit codes is stored encrypted with it. If the key file is lost, codes stop working until it is put back from the backup (12 B), or until you give yourself a new code (12 F).</p>
 <p>Until a key exists, every check-in is answered with "unavailable" and nothing changes at the businesses.</p>
 
 <h2 id="emergency">12. If something goes wrong (no programmer needed)</h2>
@@ -229,6 +230,14 @@ view_head('Guide');
     <li>cPanel &rarr; <strong>Domains</strong> &rarr; create the new address and point its folder (Document Root) at the <em>msp-control-panel</em> folder.</li>
     <li>For each business: cPanel &rarr; File Manager &rarr; that business's <strong>.env</strong> &rarr; Edit &rarr; change the <code>LICENCE_URL=</code> line to the new address, ending in <code>/api/licence.php</code> &rarr; Save.</li>
     <li>Open each business's <strong>Licence</strong> page and press <strong>Check now</strong> to confirm it connects.</li>
+</ol>
+
+<h3>F. Your 6-digit code is not accepted</h3>
+<ol>
+    <li>Check your phone's clock is set to automatic, wait for a new code, and try once more.</li>
+    <li>Tried 5 times? Wait 15 minutes, or sign in from another network (for example your phone's mobile data).</li>
+    <li>Still not working: check <em>msp-control-panel/keys/licence-private.pem</em> is there (12 B). Your codes are protected with it; put it back from your offline backup if it is missing.</li>
+    <li>Lost the phone, or the key with no backup? cPanel &rarr; <strong>Terminal</strong> &rarr; type <code>cd msp-control-panel</code>, then <code>php scripts/reset-2fa.php you@example.com</code> (your sign-in email). It prints a new secret: add it to your authenticator app by hand and delete the old entry. Your password does not change.</li>
 </ol>
 <?php
 view_foot();
