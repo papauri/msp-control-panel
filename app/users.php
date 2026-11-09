@@ -58,7 +58,28 @@ function users_reset(PDO $pdo, int $byId, int $userId, string $tempPw, string $t
     return '';
 }
 
-/** Removes another user (never yourself, never the last one). Their audit entries stay. */
+/**
+ * Whether $actor may remove $target, given how many admins are set up (2-step codes done). Rows are
+ * ['totp_secret' => ...] or null when missing. '' when allowed, otherwise the reason in words. Pure.
+ * Only a set-up admin who still exists may remove, and never the last set-up admin: a pending account (temporary
+ * password only) cannot sign in by itself, so it never counts as an admin who keeps the panel reachable.
+ */
+function users_remove_problem(?array $actor, ?array $target, int $setUpCount): string
+{
+    if ($actor === null || (string)($actor['totp_secret'] ?? '') === '') {
+        return 'Your account no longer exists or is not set up, so nothing was removed.';
+    }
+    if ($target === null) {
+        return 'That user no longer exists.';
+    }
+    $targetSetUp = (string)($target['totp_secret'] ?? '') !== '';
+    if ($targetSetUp && $setUpCount <= 1) {
+        return 'The last admin cannot be removed.';
+    }
+    return '';
+}
+
+/** Removes another user (never yourself, never the last set-up one). Their audit entries stay. */
 function users_remove(PDO $pdo, int $byId, int $userId): string
 {
     if ($userId === $byId) {
@@ -66,18 +87,25 @@ function users_remove(PDO $pdo, int $byId, int $userId): string
     }
     $pdo->beginTransaction();
     try {
-        $n = (int)$pdo->query('SELECT COUNT(*) FROM cp_admins FOR UPDATE')->fetchColumn();
-        $st = $pdo->prepare('SELECT email FROM cp_admins WHERE id = ? FOR UPDATE');
-        $st->execute([$userId]);
-        $email = $st->fetchColumn();
-        if ($email === false) {
-            $pdo->rollBack();
-            return 'That user no longer exists.';
+        // Locks every admin row (no index on totp_secret), so two admins removing each other at once run one after
+        // the other: the second finds its own account gone and stops. There is always one set-up admin left.
+        $n = (int)$pdo->query("SELECT COUNT(*) FROM cp_admins WHERE totp_secret <> '' FOR UPDATE")->fetchColumn();
+        $st = $pdo->prepare('SELECT id, email, totp_secret FROM cp_admins WHERE id IN (?, ?) ORDER BY id FOR UPDATE');
+        $st->execute([$byId, $userId]);
+        $actor = null;
+        $target = null;
+        foreach ($st->fetchAll() as $row) {
+            if ((int)$row['id'] === $byId) {
+                $actor = $row;
+            } else {
+                $target = $row;
+            }
         }
-        if ($n <= 1) {
+        if (($problem = users_remove_problem($actor, $target, $n)) !== '') {
             $pdo->rollBack();
-            return 'The last admin cannot be removed.';
+            return $problem;
         }
+        $email = (string)$target['email'];
         $pdo->prepare('DELETE FROM cp_admins WHERE id = ?')->execute([$userId]);
         audit_log($pdo, $byId, 'user_removed', null, null, ['user_id' => $userId, 'email' => (string)$email]);
         $pdo->commit();

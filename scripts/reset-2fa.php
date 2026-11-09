@@ -37,4 +37,7 @@ echo "\nNew 2-step secret for $email\n";
 echo "TOTP secret (enter manually in your authenticator app): $secret\n";
 echo "otpauth URI: " . totp_uri($secret, $email, 'Licence panel') . "\n";
 echo ($stored !== $secret ? "Stored encrypted with the signing key.\n" : "No signing key found: stored plain for now; it is encrypted at the next sign-in once the key is back.\n");
+// Every browser signed in as this admin is signed out at its next page: a session is tied to the stored secret
+// (auth_fp in app/auth.php), and the secret just changed. Checked in scripts/tests/security_test.php.
+echo "Every browser signed in as $email is signed out at its next click (its session no longer matches the new secret).\n";
 echo "Remove the old entry from the app. Store these now; the secret is not shown again.\n";

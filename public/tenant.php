@@ -35,7 +35,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     try {
         if ($action === 'save') {
-            [$errors, $clean] = tenant_validate($_POST, $postId === 0);
+            $trialIn = $_POST;
+            $trialDays = 0;
+            if ($postId === 0) {
+                // Part 3: a new business may start on a free trial; the trial then sets paid until and the step-down days.
+                [$trialDays, $trialErr] = trial_days_from_form((string)($_POST['trial_preset'] ?? ''), (string)($_POST['trial_custom'] ?? ''));
+                if ($trialErr !== '') {
+                    $errors[] = $trialErr;
+                }
+                if ($trialDays > 0 && !tenant_valid_date(trim((string)($_POST['paid_until'] ?? '')))) {
+                    $trialIn['paid_until'] = $today;
+                }
+            }
+            [$valErrors, $clean] = tenant_validate($trialIn, $postId === 0);
+            $errors = array_merge($errors, $valErrors);
             $form = $clean;
             $form['monthly_fee'] = $_POST['monthly_fee'] ?? '';
             if (!$errors) {
@@ -56,9 +69,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ]);
                     $newId = (int)$pdo->lastInsertId();
                     audit_log($pdo, $adminId, 'tenant_create', $newId, null, tenant_find($pdo, $newId));
+                    $newClient = client_sync_from_tenant($pdo, $newId, $adminId); // its client row (billing belongs to the client)
+                    if ($newClient > 0) {
+                        billing_event('client_created', ['client_id' => $newClient]);
+                    }
+                    if ($trialDays > 0) {
+                        $trialErr = trial_start($pdo, $newId, $trialDays, $adminId, $today);
+                        if ($trialErr !== '') {
+                            throw new InvalidArgumentException($trialErr);
+                        }
+                    }
                     $pdo->commit();
+                    billing_events_flush($pdo);
                     $_SESSION['new_key'] = [$newId, $key, time()]; // carried across the redirect only (new_key_purge)
-                    flash_set('ok', 'Business added. Copy the licence key (API key) below now: it is shown only once.');
+                    flash_set('ok', 'Business added' . ($trialDays > 0 ? ' on a ' . $trialDays . '-day free trial' : '') . '. Copy the licence key (API key) below now: it is shown only once.');
                     back_to($newId);
                 }
                 $before = tenant_find($pdo, $postId, true);
@@ -76,6 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $nul($clean['contact_name']), $nul($clean['billing_email']), $nul($clean['cc_emails']), $nul($clean['contact_phone']), $nul($clean['billing_address']), $postId,
                 ]);
                 audit_log($pdo, $adminId, 'tenant_update', $postId, $before, tenant_find($pdo, $postId));
+                client_sync_from_tenant($pdo, $postId, $adminId); // keep the client's name and billing contact in step
                 $pdo->commit();
                 flash_set('ok', 'Saved.');
                 back_to($postId);
@@ -93,6 +118,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (mb_strlen($ref) < 3 || mb_strlen($ref) > 190) {
                 $errors[] = 'A payment reference of 3 to 190 characters is required (receipt, transfer or cheque number).';
             }
+            // One-time form token: a double click (or a resubmit) must not record the payment twice.
+            $once = isset($_POST['once']) && is_string($_POST['once']) ? $_POST['once'] : '';
+            if (!$errors && !billing_once_consume('tenant_pay_' . $postId, $once)) {
+                flash_set('info', 'This payment was already recorded (the form was sent twice). Check Recent payments below.');
+                back_to($postId);
+            }
+            // An open invoice that extends the licence when paid would extend it a second time.
+            $extInv = !$errors ? billing_open_extending_invoice($pdo, $postId) : null;
+            if ($extInv) {
+                flash_set('error', 'Invoice ' . $extInv['number'] . ' extends this licence by ' . (int)$extInv['extend_months']
+                    . ' month(s) when it is paid. Record the payment on that invoice instead (Billing, invoice ' . $extInv['number'] . '), or void it first.');
+                header('Location: document.php?id=' . (int)$extInv['id']);
+                exit;
+            }
             if (!$errors) {
                 $pdo->beginTransaction();
                 $before = tenant_find($pdo, $postId, true);
@@ -100,17 +139,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $pdo->rollBack();
                     back_to(0);
                 }
+                $payClient = client_for_tenant($pdo, $postId);
                 $base = max($today, $before['paid_until']);
                 $newDate = status_add_months($base, $months);
                 $pdo->prepare('UPDATE cp_tenants SET paid_until = ? WHERE id = ?')->execute([$newDate, $postId]);
+                if (trial_is_on($before)) {
+                    // paying during a free trial ends the trial: a paying customer gets the normal step-down days, and no trial emails
+                    $pdo->prepare('UPDATE cp_tenants SET trial_converted_at = ?, grace_days = ?, readonly_days = ? WHERE id = ?')
+                        ->execute([date('Y-m-d H:i:s'), trial_setting_int('default_grace_days', 14), trial_setting_int('default_readonly_days', 14), $postId]);
+                }
                 $pdo->prepare(
-                    'INSERT INTO cp_payments (tenant_id, admin_id, amount, currency, months, reference, paid_until_before, paid_until_after)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-                )->execute([$postId, $adminId, $amount, $before['currency'], $months, $ref, $before['paid_until'], $newDate]);
+                    'INSERT INTO cp_payments (tenant_id, client_id, admin_id, amount, currency, months, reference, paid_until_before, paid_until_after, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                )->execute([$postId, $payClient ? (int)$payClient['id'] : null, $adminId, $amount, $before['currency'], $months, $ref,
+                    $before['paid_until'], $newDate, date('Y-m-d H:i:s')]);
                 $after = tenant_find($pdo, $postId);
                 $after['_payment'] = ['amount' => $amount, 'currency' => $before['currency'], 'months' => $months, 'reference' => $ref];
+                $licPaymentId = (int)$pdo->lastInsertId();
                 audit_log($pdo, $adminId, 'payment_recorded', $postId, $before, $after);
+                // After the commit: automatic receipt / thank-you for a licence payment too (automation_event, guarded).
+                billing_event('payment_recorded', ['payment_id' => $licPaymentId, 'document_id' => null, 'paid_in_full' => false]);
                 $pdo->commit();
+                billing_events_flush($pdo);
                 flash_set('ok', 'Payment recorded. Paid until is now ' . $newDate . '.');
                 back_to($postId);
             }
@@ -156,6 +206,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('ok', 'Override cleared. Status now follows the paid-until date.');
                 back_to($postId);
             }
+        } elseif ($action === 'trial_start' && $postId > 0) {
+            [$days, $err] = trial_days_from_form((string)($_POST['trial_preset'] ?? ''), (string)($_POST['trial_custom'] ?? ''));
+            $err = $err !== '' ? $err : ($days === 0 ? 'Choose the trial length.' : trial_start($pdo, $postId, $days, $adminId, $today));
+            flash_set($err === '' ? 'ok' : 'error', $err === '' ? 'Free trial started: ' . $days . ' days. The business picks it up at its next check-in.' : $err);
+            back_to($postId);
+        } elseif ($action === 'trial_extend' && $postId > 0) {
+            if (!billing_once_consume('trial_extend_' . $postId, (string)($_POST['once'] ?? ''))) {
+                flash_set('info', 'This extension was already made (the form was sent twice).');
+                back_to($postId);
+            }
+            [$days, $err] = trial_days_from_form((string)($_POST['trial_preset'] ?? ''), (string)($_POST['trial_custom'] ?? ''));
+            $err = $err !== '' ? $err : ($days === 0 ? 'Choose how many days to add.' : trial_extend($pdo, $postId, $days, $adminId, $today));
+            flash_set($err === '' ? 'ok' : 'error', $err === '' ? 'Free trial extended by ' . $days . ' days.' : $err);
+            back_to($postId);
+        } elseif ($action === 'trial_end' && $postId > 0) {
+            $err = trial_end_now($pdo, $postId, $adminId, $today);
+            flash_set($err === '' ? 'ok' : 'error', $err === '' ? 'Free trial ended. The step-down (view-only, then paused) starts today.' : $err);
+            back_to($postId);
+        } elseif ($action === 'trial_convert' && $postId > 0) {
+            if (!billing_once_consume('trial_convert_' . $postId, (string)($_POST['once'] ?? ''))) {
+                flash_set('info', 'This trial was already converted (the form was sent twice). See Billing below.');
+                back_to($postId);
+            }
+            $planId = isset($_POST['plan_id']) && ctype_digit((string)$_POST['plan_id']) ? (int)$_POST['plan_id'] : 0;
+            $mode = isset($_POST['send_mode']) && is_string($_POST['send_mode']) ? $_POST['send_mode'] : 'approve';
+            $r = trial_convert($pdo, $postId, ['plan_id' => $planId, 'yearly' => ($_POST['yearly'] ?? '') === '1', 'send_mode' => $mode], $adminId, $today);
+            if (!$r['ok']) {
+                flash_set('error', $r['error']);
+                back_to($postId);
+            }
+            $msg = 'Converted to a paid plan: recurring schedule created and the first invoice made.';
+            if (($_POST['first_invoice'] ?? '') === 'send') {
+                if (billing_has_mail()) {
+                    $sent = billing_send($pdo, 'invoice', (int)$r['document_id'], [], $adminId);
+                    $msg .= !empty($sent['ok']) ? ' The invoice was emailed to ' . implode(', ', (array)$sent['to']) . '.' : ' The invoice was NOT sent: ' . (string)$sent['error'] . ' It is saved as a draft.';
+                } else {
+                    $msg .= ' Sending email is not available, so the invoice is saved as a draft.';
+                }
+            } else {
+                $msg .= ' The invoice is a draft: open it to check and send it.';
+            }
+            flash_set('ok', $msg . ' Paid until moves when the invoice is paid.');
+            back_to($postId);
         } elseif ($action === 'regen_key' && $postId > 0) {
             $pdo->beginTransaction();
             $before = tenant_find($pdo, $postId, true);
@@ -176,10 +269,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo 'Invalid request.';
             exit;
         }
+    } catch (InvalidArgumentException $ex) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        billing_events_clear();
+        $errors[] = $ex->getMessage();
     } catch (PDOException $ex) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
+        billing_events_clear();
         if ($ex->getCode() === '23000') {
             $errors[] = 'That short name is already used by another business.';
         } else {
@@ -229,7 +329,9 @@ echo '<h1>' . ($tenant ? e($tenant['name']) : 'Add business') . '</h1>';
 if ($tenant) {
     $computed = status_compute($tenant, $today);
     $sched = status_schedule($tenant['paid_until'], (int)$tenant['grace_days'], (int)$tenant['readonly_days'], $today);
-    echo '<section class="card"><h2>Status now</h2><p>' . view_pill($computed, !empty($tenant['status_override'])) . '</p>';
+    $trialWords = trial_words($tenant, $today);
+    echo '<section class="card"><h2>Status now</h2><p>' . view_pill($computed, !empty($tenant['status_override']))
+        . ($trialWords !== '' ? ' ' . view_trial_tag($trialWords) : '') . '</p>';
     if (!empty($tenant['status_override'])) {
         echo '<p class="muted">Set by hand: ' . e($tenant['override_reason']) . '. Without the override the date would give: '
             . e($sched) . '.</p>';
@@ -248,9 +350,71 @@ if ($tenant) {
             . '<p class="muted">Short name to use with it: <code>' . e($tenant['slug']) . '</code></p></section>';
     }
 
+    // Free trial (Part 3): start / extend / end / convert.
+    $tid0 = (int)$tenant['id'];
+    $presetSel = static function (string $name = 'trial_preset', bool $none = false): string {
+        $h = '<label>Length<select name="' . $name . '">' . ($none ? '<option value="">No free trial</option>' : '');
+        foreach (TRIAL_PRESETS as $p) {
+            $h .= '<option value="' . $p . '"' . ($p === 14 ? ' selected' : '') . '>' . $p . ' days</option>';
+        }
+        return $h . '<option value="custom">Custom (below)</option></select></label>'
+            . '<label>Custom days (1-' . TRIAL_MAX_DAYS . ')<input type="number" name="trial_custom" min="1" max="' . TRIAL_MAX_DAYS . '"></label>';
+    };
+    $tHidden = csrf_field() . '<input type="hidden" name="id" value="' . $tid0 . '">';
+    echo '<section class="card" id="trial"><h2>Free trial</h2>';
+    if (!empty($tenant['trial_converted_at'])) {
+        echo '<p>Converted to a paid plan on ' . e(billing_date(substr((string)$tenant['trial_converted_at'], 0, 10))) . ' (trial '
+            . e(billing_date((string)$tenant['trial_started'])) . ' to ' . e(billing_date((string)$tenant['trial_until'])) . ').</p>';
+    } elseif (trial_is_on($tenant)) {
+        $sd = trial_step_dates((string)$tenant['trial_until'], (int)$tenant['grace_days'], (int)$tenant['readonly_days']);
+        echo '<p>' . view_trial_tag($trialWords) . ' Started ' . e(billing_date((string)$tenant['trial_started'])) . ', last day '
+            . e(billing_date((string)$tenant['trial_until'])) . '. After it: view-only from ' . e(billing_date($sd['read_only_from']))
+            . ', paused from ' . e(billing_date($sd['locked_from'])) . '. Data is never deleted.</p>'
+            . '<div class="bill-grid">'
+            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="js-once">' . $tHidden . '<input type="hidden" name="action" value="trial_extend">'
+            . '<input type="hidden" name="once" value="' . e(billing_once_issue('trial_extend_' . $tid0)) . '">'
+            . '<h3>Extend</h3><p class="muted">Adds days from the later of the last day and today.</p>' . $presetSel() . '<button type="submit" class="secondary">Extend trial</button></form>';
+        if ((int)trial_days_left($tenant, $today) >= 0) {
+            echo '<form method="post" action="tenant.php?id=' . $tid0 . '#trial">' . $tHidden . '<input type="hidden" name="action" value="trial_end">'
+                . '<h3>End now</h3><p class="muted">Yesterday becomes the last day: view-only starts today, then the staff area pauses.</p>'
+                . '<button type="submit" class="danger">End the trial now</button></form>';
+        }
+        echo '</div>';
+        billing_seed_plans($pdo, $adminId); // first use only (locked, audited, once): the usual plans at price 0
+        $plans = plan_list($pdo);
+        $pct = plan_discount_pct(billing_setting('annual_discount_pct'));
+        echo '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="js-once spaced">' . $tHidden . '<input type="hidden" name="action" value="trial_convert">'
+            . '<input type="hidden" name="once" value="' . e(billing_once_issue('trial_convert_' . $tid0)) . '">'
+            . '<h3>Convert to paid</h3><p class="muted">Creates a recurring invoice starting today and its first invoice. The normal grace and read-only days '
+            . '(' . e(billing_setting('default_grace_days')) . ' / ' . e(billing_setting('default_readonly_days')) . ') come back. Paid until moves when the first invoice is paid; '
+            . 'until then the trial\'s last day stays.</p>'
+            . '<label>Plan<select name="plan_id" required><option value="0">This business\'s monthly fee: ' . e(billing_money((float)$tenant['monthly_fee'], (string)$tenant['currency'])) . ' a month</option>';
+        foreach ($plans as $pl) {
+            echo '<option value="' . (int)$pl['id'] . '">' . e(plan_label($pl)) . '</option>';
+        }
+        echo '</select></label>'
+            . '<label class="check"><input type="checkbox" name="yearly" value="1"> Bill a monthly plan once a year (12 months' . ($pct > 0 ? ', ' . e(rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.')) . '% annual discount' : '') . ')</label>'
+            . '<label>First invoice<select name="first_invoice"><option value="draft">Save as a draft (I will check and send it)</option><option value="send">Email it now</option></select></label>'
+            . '<label>Later invoices<select name="send_mode">';
+        foreach (recurring_send_modes() as $mk => $ml) {
+            echo '<option value="' . e($mk) . '"' . ($mk === 'approve' ? ' selected' : '') . '>' . e($ml) . '</option>';
+        }
+        echo '</select></label><button type="submit">Convert to paid</button></form>';
+    } elseif (trial_start_error($tenant, trial_has_paid($pdo, $tid0)) === "") { // never for a paid-up business (e.g. paid until 2099)
+        echo '<p class="muted">This business has never paid, so it can start a free trial. The trial sets paid until to its last day; after it the system is '
+            . 'view-only for ' . e(billing_setting('trial_readonly_days')) . ' day(s)' . ((int)billing_setting('trial_grace_days') > 0 ? ' after ' . e(billing_setting('trial_grace_days')) . ' grace day(s)' : '')
+            . ', then the staff area pauses (data is never deleted).</p>'
+            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial">' . $tHidden . '<input type="hidden" name="action" value="trial_start">'
+            . $presetSel() . '<button type="submit" class="secondary">Start free trial</button></form>';
+    } else {
+        echo '<p class="muted">Not on a free trial. A trial is only for a business that has never paid.</p>';
+    }
+    echo '</section>';
+
     // Billing (2026-11-09): what this business owes on sent invoices.
     $bill = billing_tenant_summary($pdo, (int)$tenant['id']);
     $tid = (int)$tenant['id'];
+    $tClient = client_for_tenant($pdo, $tid);
     echo '<section class="card"><h2>Billing</h2><div class="bill-stats">'
         . '<p><span class="muted">Owed</span><strong>' . e(billing_money($bill['owed'], $bill['currency'])) . '</strong></p>'
         . '<p><span class="muted">Overdue</span><strong' . ($bill['overdue'] > BILLING_TOLERANCE ? ' class="bill-overdue"' : '') . '>'
@@ -273,7 +437,8 @@ if ($tenant) {
     } else {
         echo '<p class="muted">No unpaid invoices.</p>';
     }
-    echo '<p class="bill-links"><a href="document.php?new=invoice&amp;tenant=' . $tid . '">New invoice</a>'
+    echo '<p class="bill-links">' . ($tClient ? '<a href="client.php?id=' . (int)$tClient['id'] . '">Client page</a>' : '')
+        . '<a href="document.php?new=invoice&amp;tenant=' . $tid . '">New invoice</a>'
         . '<a href="document.php?new=quote&amp;tenant=' . $tid . '">New quotation</a>'
         . '<a href="statement.php?tenant=' . $tid . '">Statement</a>'
         . '<a href="invoices.php?tenant=' . $tid . '">All invoices</a></p>';
@@ -282,11 +447,16 @@ if ($tenant) {
     }
     echo '</section>';
 
+    $extInv = billing_open_extending_invoice($pdo, $tid);
     echo '<section class="card"><h2>Record payment</h2>'
         . '<p class="muted">Extends "paid until" from today or the current paid-until date, whichever is later. '
         . 'For money against an invoice, use Record payment on the invoice instead.</p>'
-        . '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '">' . csrf_field()
+        . (trial_is_on($tenant) ? '<p class="flash flash-info">This business is on a free trial. A payment recorded here ends the trial: it becomes a paying customer with the normal step-down days. '
+            . 'To set up its monthly billing as well, use <a href="#trial">Convert to paid</a> instead.</p>' : '')
+        . ($extInv ? '<p class="flash flash-info">Invoice <a href="document.php?id=' . (int)$extInv['id'] . '">' . e($extInv['number']) . '</a> extends this licence when it is paid: record the payment there, not here, or the licence would be extended twice.</p>' : '')
+        . '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="js-once">' . csrf_field()
         . '<input type="hidden" name="action" value="payment"><input type="hidden" name="id" value="' . (int)$tenant['id'] . '">'
+        . '<input type="hidden" name="once" value="' . e(billing_once_issue('tenant_pay_' . $tid)) . '">'
         . '<label>Months paid<input type="number" name="months" min="1" max="60" value="1" required></label>'
         . '<label>Amount received (' . e($tenant['currency']) . ')<input type="text" name="amount" inputmode="decimal" required'
         . ' value="' . e($tenant['monthly_fee']) . '"></label>'
@@ -343,9 +513,15 @@ echo '<label>Website domain (must match what the customer system reports)<input 
     . '<label>Plan<input type="text" name="plan" maxlength="60" value="' . e($v('plan')) . '"></label>'
     . '<label>Monthly fee<input type="text" name="monthly_fee" inputmode="decimal" required value="' . e($v('monthly_fee', '0')) . '"></label>'
     . '<label>Currency<input type="text" name="currency" required maxlength="3" value="' . e($v('currency', 'MWK')) . '"></label>'
-    . '<label>Paid until (YYYY-MM-DD; use Record payment to extend)<input type="date" name="paid_until" required value="' . e($v('paid_until')) . '"></label>'
-    . '<label>Grace days (banner shown, everything works)<input type="number" name="grace_days" min="0" max="365" required value="' . e($v('grace_days', '14')) . '"></label>'
-    . '<label>Read-only days (view, check-out and export only)<input type="number" name="readonly_days" min="0" max="365" required value="' . e($v('readonly_days', '14')) . '"></label>'
+    . (!$tenant ? '<fieldset class="modules"><legend>Free trial (optional)</legend><p class="muted">A trial sets paid until to its last day and uses the '
+        . 'after-trial step-down from Settings. Leave "No free trial" to set paid until yourself.</p>'
+        . '<label>Length<select name="trial_preset"><option value="">No free trial</option>'
+        . implode('', array_map(static fn($p) => '<option value="' . $p . '"' . ((string)($_POST['trial_preset'] ?? '') === (string)$p ? ' selected' : '') . '>' . $p . ' days</option>', TRIAL_PRESETS))
+        . '<option value="custom"' . (($_POST['trial_preset'] ?? '') === 'custom' ? ' selected' : '') . '>Custom (below)</option></select></label>'
+        . '<label>Custom days (1-' . TRIAL_MAX_DAYS . ')<input type="number" name="trial_custom" min="1" max="' . TRIAL_MAX_DAYS . '" value="' . e((string)($_POST['trial_custom'] ?? '')) . '"></label></fieldset>' : '')
+    . '<label>Paid until (YYYY-MM-DD; use Record payment to extend' . (!$tenant ? '; not needed with a free trial' : '') . ')<input type="date" name="paid_until"' . ($tenant ? ' required' : '') . ' value="' . e($v('paid_until')) . '"></label>'
+    . '<label>Grace days (banner shown, everything works)<input type="number" name="grace_days" min="0" max="365" required value="' . e($v('grace_days', billing_setting('default_grace_days'))) . '"></label>'
+    . '<label>Read-only days (view, check-out and export only)<input type="number" name="readonly_days" min="0" max="365" required value="' . e($v('readonly_days', billing_setting('default_readonly_days'))) . '"></label>'
     . '<fieldset class="modules"><legend>Billing contact (invoices, reminders and statements go here)</legend>'
     . '<label>Contact name<input type="text" name="contact_name" maxlength="120" value="' . e($v('contact_name')) . '"></label>'
     . '<label>Billing email<input type="email" name="billing_email" maxlength="190" value="' . e($v('billing_email')) . '"></label>'

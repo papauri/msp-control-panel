@@ -1,11 +1,26 @@
-// Billing pages (invoice / quotation editor, confirm buttons). External file because the CSP forbids inline script.
-// The server recalculates every total on save; the figures here are only a live preview.
+// Billing pages (invoice / quotation editor, recurring schedule editor, confirm buttons). External file because the CSP
+// forbids inline script. The server recalculates every total on save; the figures here are only a live preview.
 (function () {
   // Forms that ask before doing something final (void, convert, mark sent).
   var confirms = document.querySelectorAll('form[data-confirm]');
   for (var i = 0; i < confirms.length; i++) {
     confirms[i].addEventListener('submit', function (ev) {
       if (!window.confirm(this.getAttribute('data-confirm'))) { ev.preventDefault(); }
+    });
+  }
+  // Forms sent once (record payment, save): the button is disabled after the first click. The server also refuses a
+  // repeat (one-time token), this only spares the owner the message.
+  var onceForms = document.querySelectorAll('form.js-once');
+  for (var o = 0; o < onceForms.length; o++) {
+    onceForms[o].addEventListener('submit', function (ev) {
+      if (ev.defaultPrevented) { return; }
+      var f = this;
+      if (f.getAttribute('data-sent') === '1') { ev.preventDefault(); return; }
+      f.setAttribute('data-sent', '1');
+      window.setTimeout(function () {
+        var b = f.querySelectorAll('button[type=submit]');
+        for (var j = 0; j < b.length; j++) { b[j].disabled = true; }
+      }, 0);
     });
   }
 
@@ -39,13 +54,27 @@
   function recalc() {
     var rows = body.querySelectorAll('tr.line');
     var sub = 0;
+    var cost = 0;
+    var revKnown = 0;
+    var known = 0;
+    var unknown = 0;
     for (var i = 0; i < rows.length; i++) {
       var q = rows[i].querySelector('.in-qty');
       var p = rows[i].querySelector('.in-price');
+      var c = rows[i].querySelector('.in-cost');
+      var it = rows[i].querySelector('.in-item');
       var lt = r2(num(q && q.value) * num(p && p.value));
       sub = r2(sub + lt);
       var cell = rows[i].querySelector('.line-total');
       if (cell) { cell.textContent = money(lt); }
+      if (!it || !it.value) { continue; }
+      if (c && String(c.value).trim() !== '') {
+        known++;
+        cost = r2(cost + r2(num(q && q.value) * num(c.value)));
+        revKnown = r2(revKnown + lt);
+      } else {
+        unknown++;
+      }
     }
     var discEl = document.getElementById('discount');
     var rateEl = document.getElementById('tax_rate');
@@ -56,9 +85,17 @@
     setText('t-disc', money(disc));
     setText('t-tax', money(tax));
     setText('t-total', money(r2(sub - disc + tax)));
+    // Same rule as billing_profit(): complete = every line has a cost; otherwise only the lines with one.
+    if (known === 0) {
+      setText('t-profit', 'add cost prices');
+    } else if (unknown === 0) {
+      setText('t-profit', money(r2(sub - disc - cost)));
+    } else {
+      setText('t-profit', money(r2(revKnown - cost)) + ' (lines with a cost)');
+    }
   }
 
-  function addLine(qty, item, desc, price) {
+  function addLine(qty, item, desc, price, cost, catId) {
     var frag = tpl.content ? tpl.content.cloneNode(true) : null;
     var row;
     if (frag) {
@@ -82,6 +119,10 @@
     if (item !== undefined) { row.querySelector('.in-item').value = item; }
     if (desc !== undefined) { row.querySelector('.in-desc').value = desc; }
     if (price !== undefined) { row.querySelector('.in-price').value = price; }
+    var ce = row.querySelector('.in-cost');
+    if (ce && cost !== undefined) { ce.value = cost; }
+    var ci = row.querySelector('.in-cat');
+    if (ci && catId !== undefined) { ci.value = catId; }
     body.appendChild(row);
     recalc();
     var focus = row.querySelector(item ? '.in-qty' : '.in-item');
@@ -99,7 +140,14 @@
   form.addEventListener('input', function (ev) {
     var t = ev.target;
     if (!t || !t.classList) { return; }
-    if (t.classList.contains('in-qty') || t.classList.contains('in-price') || t.id === 'discount' || t.id === 'tax_rate' || t.id === 'currency') {
+    if (t.classList.contains('in-item')) {
+      // A renamed line is no longer the saved item it came from.
+      var row = t.closest('tr');
+      var ci = row ? row.querySelector('.in-cat') : null;
+      if (ci && ci.value && t.getAttribute('data-picked') && t.value !== t.getAttribute('data-picked')) { ci.value = ''; }
+    }
+    if (t.classList.contains('in-qty') || t.classList.contains('in-price') || t.classList.contains('in-cost') || t.classList.contains('in-item')
+        || t.id === 'discount' || t.id === 'tax_rate' || t.id === 'currency') {
       recalc();
     }
   });
@@ -107,6 +155,7 @@
   var addBtn = document.getElementById('add-line');
   if (addBtn) { addBtn.addEventListener('click', function () { addLine(); }); }
 
+  var clientSel = document.getElementById('client-pick');
   var pick = document.getElementById('catalog-pick');
   var addCat = document.getElementById('add-catalog');
   if (pick && addCat) {
@@ -114,55 +163,66 @@
       var opt = pick.options[pick.selectedIndex];
       if (!opt || !opt.value) { pick.focus(); return; }
       var desc = opt.getAttribute('data-desc') || '';
-      var tsel = document.getElementById('tenant-pick');
-      var topt = tsel ? tsel.options[tsel.selectedIndex] : null;
-      // "<domain>" in a saved description is filled with the business's website when one is chosen.
-      if (topt && topt.value && desc.indexOf('<domain>') !== -1) {
-        var dm = topt.getAttribute('data-domain') || '';
+      var copt = clientSel ? clientSel.options[clientSel.selectedIndex] : null;
+      // "<domain>" in a saved description is filled with the hosted business's website when the client has one.
+      if (copt && copt.value && desc.indexOf('<domain>') !== -1) {
+        var dm = copt.getAttribute('data-domain') || '';
         if (dm) { desc = desc.replace('<domain>', dm); }
       }
-      addLine('1', opt.getAttribute('data-item') || '', desc, opt.getAttribute('data-price') || '');
+      addLine('1', opt.getAttribute('data-item') || '', desc, opt.getAttribute('data-price') || '', opt.getAttribute('data-cost') || '', opt.value);
+      var rows = body.querySelectorAll('tr.line');
+      var last = rows.length ? rows[rows.length - 1].querySelector('.in-item') : null;
+      if (last) { last.setAttribute('data-picked', last.value); }
       pick.selectedIndex = 0;
     });
   }
 
-  var tenantSel = document.getElementById('tenant-pick');
   var subBtn = document.getElementById('add-sub');
   var subMsg = document.getElementById('sub-msg');
-  if (subBtn && tenantSel) {
+  if (subBtn && clientSel) {
     subBtn.addEventListener('click', function () {
-      var opt = tenantSel.options[tenantSel.selectedIndex];
-      if (!opt || !opt.value) {
+      var opt = clientSel.options[clientSel.selectedIndex];
+      if (!opt || !opt.value || opt.getAttribute('data-hosted') !== '1') {
         if (subMsg) { subMsg.hidden = false; }
-        tenantSel.focus();
+        clientSel.focus();
         return;
       }
       if (subMsg) { subMsg.hidden = true; }
       var mEl = document.getElementById('sub-months');
       var months = Math.max(1, Math.min(60, parseInt(mEl && mEl.value, 10) || 1));
       var desc = (opt.getAttribute('data-sub-desc') || '').replace(/\n1 month at the monthly fee\.$/, '\n' + months + ' month' + (months === 1 ? '' : 's') + ' at the monthly fee.');
-      addLine(String(months), opt.getAttribute('data-sub-item') || 'Licence', desc, opt.getAttribute('data-sub-price') || '0');
+      addLine(String(months), opt.getAttribute('data-sub-item') || 'Licence', desc, opt.getAttribute('data-sub-price') || '0', '', '');
       var ext = document.getElementById('extend_months');
       if (ext && !ext.disabled && (!ext.value || ext.value === '0')) { ext.value = String(months); }
     });
   }
 
-  // Choosing a business fills the customer fields that are still empty (or still hold the previous business's details).
-  if (tenantSel && !tenantSel.disabled) {
-    var last = tenantSel.options[tenantSel.selectedIndex];
-    tenantSel.addEventListener('change', function () {
-      var opt = tenantSel.options[tenantSel.selectedIndex];
+  // Choosing a client fills the printed customer fields that are still empty (or still hold the previous client's
+  // details); "New client" shows the new-client fields.
+  var newBox = document.getElementById('new-client');
+  if (clientSel && !clientSel.disabled) {
+    var lastOpt = clientSel.options[clientSel.selectedIndex];
+    clientSel.addEventListener('change', function () {
+      var opt = clientSel.options[clientSel.selectedIndex];
+      var isNew = opt && opt.value === 'new';
+      if (newBox) { newBox.hidden = !isNew; }
+      if (isNew) {
+        var nn = document.getElementById('nc_name');
+        if (nn) { nn.focus(); }
+      }
       var map = { customer_name: 'data-name', customer_contact: 'data-contact', customer_email: 'data-email', customer_address: 'data-address', currency: 'data-currency' };
       for (var id in map) {
         if (!Object.prototype.hasOwnProperty.call(map, id)) { continue; }
         var el = document.getElementById(id);
         if (!el) { continue; }
-        var prev = last && last.value ? (last.getAttribute(map[id]) || '') : '';
-        if (opt && opt.value && (el.value === '' || el.value === prev)) {
+        var prev = lastOpt && lastOpt.value && lastOpt.value !== 'new' ? (lastOpt.getAttribute(map[id]) || '') : '';
+        if (opt && opt.value && !isNew && (el.value === '' || el.value === prev)) {
           el.value = opt.getAttribute(map[id]) || el.value;
+        } else if (isNew && id !== 'currency' && el.value === prev) {
+          el.value = '';
         }
       }
-      last = opt;
+      lastOpt = opt;
       if (subMsg) { subMsg.hidden = true; }
       recalc();
     });

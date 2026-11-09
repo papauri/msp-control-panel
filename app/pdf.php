@@ -82,6 +82,58 @@ function pdf_filename(string $title, string $number): string
     return $name . '.pdf';
 }
 
+/**
+ * Long unbroken words (domains, URLs, file names) wider than the column are split at sensible points (after / . - _) into
+ * pieces that fit, joined with new lines; a piece with no such point that is still too wide is split by characters (the
+ * only case where a word is cut mid-way). Normal words that fit are never touched. $width(string): float measures text in
+ * the current font. Pure apart from $width.
+ */
+function pdf_wrap_long(string $text, float $wmax, callable $width): string
+{
+    if ($wmax <= 0 || $text === '') {
+        return $text;
+    }
+    $lines = preg_split('/\r\n|\r|\n/', $text);
+    foreach ($lines as $li => $line) {
+        $tokens = explode(' ', $line);
+        foreach ($tokens as $ti => $tok) {
+            if ($tok === '' || $width($tok) <= $wmax) {
+                continue;
+            }
+            $segments = preg_split('#(?<=[/._-])#u', $tok, -1, PREG_SPLIT_NO_EMPTY) ?: [$tok];
+            $pieces = [];
+            $cur = '';
+            foreach ($segments as $seg) {
+                if ($width($seg) > $wmax) {
+                    if ($cur !== '') {
+                        $pieces[] = $cur;
+                        $cur = '';
+                    }
+                    foreach (preg_split('//u', $seg, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $ch) {
+                        if ($cur !== '' && $width($cur . $ch) > $wmax) {
+                            $pieces[] = $cur;
+                            $cur = '';
+                        }
+                        $cur .= $ch;
+                    }
+                    continue;
+                }
+                if ($cur !== '' && $width($cur . $seg) > $wmax) {
+                    $pieces[] = $cur;
+                    $cur = '';
+                }
+                $cur .= $seg;
+            }
+            if ($cur !== '') {
+                $pieces[] = $cur;
+            }
+            $tokens[$ti] = implode("\n", $pieces);
+        }
+        $lines[$li] = implode(' ', $tokens);
+    }
+    return implode("\n", $lines);
+}
+
 // ---------------------------------------------------------------- frame
 
 /** One line of text at (x, y); never wraps (squeezes horizontally if too long), never shrinks the font. */
@@ -253,7 +305,11 @@ function pdf__table(TCPDF $pdf, array $company, array $cols, array $rows, float 
         $pdf->setCellPaddings(1.6, 1.4, 1.6, 1.0);
         $h = 6.8;
         foreach ($cols as $i => $c) {
-            $h = max($h, $pdf->getStringHeight($c['w'], (string)($row[$i] ?? '')));
+            // Long domains / URLs break after / . - _ instead of mid-word (cell padding 1.6 + 1.6, small safety margin).
+            $row[$i] = pdf_wrap_long((string)($row[$i] ?? ''), $c['w'] - 3.6, function (string $t) use ($pdf): float {
+                return (float)$pdf->GetStringWidth($t);
+            });
+            $h = max($h, $pdf->getStringHeight($c['w'], $row[$i]));
         }
         if ($y + $h > PDF_LIMIT) {
             $pdf->Line(PDF_L, $y, PDF_L + PDF_W, $y);
@@ -475,11 +531,11 @@ function pdf_document(array $doc, array $company): string
     $y = pdf__top($pdf, $title, $company, $meta, $customer, $stamp);
 
     $cols = [
-        ['label' => 'Qty', 'w' => 14.0, 'align' => 'R'],
+        ['label' => 'Qty', 'w' => 12.0, 'align' => 'R'],
         ['label' => 'Item', 'w' => 28.2, 'align' => 'L'],
-        ['label' => 'Description', 'w' => 75.5, 'align' => 'L'],
-        ['label' => 'Unit Price', 'w' => 30.0, 'align' => 'R'],
-        ['label' => 'Total', 'w' => 30.3, 'align' => 'R'],
+        ['label' => 'Description', 'w' => 68.5, 'align' => 'L'],
+        ['label' => 'Unit Price', 'w' => 34.5, 'align' => 'R'],   // wide enough for MWK99,999,999.99 on one line
+        ['label' => 'Total', 'w' => 34.8, 'align' => 'R'],
     ];
     $rows = [];
     foreach ((array)($doc['items'] ?? []) as $it) {
@@ -520,7 +576,7 @@ function pdf_document(array $doc, array $company): string
             ? 'This quotation is valid until ' . pdf_date($doc['due_date']) . '.' : '',
         'thank_you' => (string)($company['thank_you'] ?? 'Thank you for your business.'),
         'details' => (string)($company['payment_details'] ?? ''),
-        'remittance' => $isQuote ? [] : [
+        'remittance' => ($isQuote || $balance <= PDF_TOL) ? [] : [ // nothing to send back once it is paid
             ['Invoice No.:', $number],
             ['Customer Name:', $remitName],
             ['Date:', pdf_date($doc['issue_date'] ?? null)],
@@ -614,20 +670,28 @@ function pdf_receipt(array $payment, array $doc, array $company): string
     $total = round((float)($doc['total'] ?? 0), 2);
     $paid = round((float)($doc['amount_paid'] ?? 0), 2);
     $balance = isset($doc['balance']) ? round((float)$doc['balance'], 2) : round($total - $paid, 2);
+    // A reprint for an earlier part payment shows the invoice as it stood right after THAT payment, not today.
+    if (isset($payment['paid_to_date'])) {
+        $paid = round((float)$payment['paid_to_date'], 2);
+        $balance = round($total - $paid, 2);
+    }
     $amount = round((float)($payment['amount'] ?? 0), 2);
     $date = pdf_date($payment['created_at'] ?? null);
+    $onInvoice = $docNo !== ''; // a payment not against an invoice (licence payment) has no invoice lines on its receipt
 
     $pdf = pdf__new('Receipt', $receiptNo, $company);
     $meta = [
         ['Date:', $date],
         ['Receipt No.:', $receiptNo],
-        ['Invoice No.:', $docNo],
     ];
+    if ($onInvoice) {
+        $meta[] = ['Invoice No.:', $docNo];
+    }
     $sales = trim((string)($doc['salesperson'] ?? '')) !== '' ? (string)$doc['salesperson'] : (string)($company['salesperson'] ?? '');
     if (trim($sales) !== '') {
         $meta[] = ['Salesperson:', $sales];
     }
-    $y = pdf__top($pdf, 'Receipt', $company, $meta, pdf__customer($doc), $balance <= PDF_TOL ? 'PAID' : '');
+    $y = pdf__top($pdf, 'Receipt', $company, $meta, pdf__customer($doc), $onInvoice && $balance <= PDF_TOL ? 'PAID' : '');
 
     $cols = [
         ['label' => 'Date', 'w' => 24.0, 'align' => 'L'],
@@ -637,19 +701,22 @@ function pdf_receipt(array $payment, array $doc, array $company): string
         ['label' => 'Amount', 'w' => 30.3, 'align' => 'R'],
     ];
     $method = trim((string)($payment['method'] ?? ''));
-    $rows = [[$date, $docNo, $method !== '' ? ucwords(str_replace('_', ' ', $method)) : '', (string)($payment['reference'] ?? ''), pdf_money($amount, $cur)]];
+    $methodLabel = trim((string)($payment['method_label'] ?? '')) !== '' ? trim((string)$payment['method_label'])
+        : ($method !== '' ? ucfirst(str_replace('_', ' ', $method)) : '');
+    $rows = [[$date, $docNo, $methodLabel, (string)($payment['reference'] ?? ''), pdf_money($amount, $cur)]];
 
+    $totals = [['Amount Received', pdf_money($amount, $cur)]];
+    if ($onInvoice) {
+        $totals[] = ['Invoice Total', pdf_money($total, $cur)];
+        $totals[] = ['Total Paid', pdf_money($paid, $cur)];
+        $totals[] = ['Balance Left', pdf_money($balance, $cur)];
+    }
     $closing = [
-        'totals' => [
-            ['Amount Received', pdf_money($amount, $cur)],
-            ['Invoice Total', pdf_money($total, $cur)],
-            ['Total Paid', pdf_money($paid, $cur)],
-            ['Balance Left', pdf_money($balance, $cur)],
-        ],
-        'notes' => '',
-        'line' => $balance <= PDF_TOL ? 'Invoice ' . $docNo . ' is paid in full.' : '',
+        'totals' => $totals,
+        'notes' => (string)($payment['description'] ?? ''),
+        'line' => $onInvoice && $balance <= PDF_TOL ? 'Invoice ' . $docNo . ' is paid in full.' : '',
         'thank_you' => 'Thank you for your payment.',
-        'details' => $balance > PDF_TOL ? (string)($company['payment_details'] ?? '') : '',
+        'details' => $onInvoice && $balance > PDF_TOL ? (string)($company['payment_details'] ?? '') : '',
         'remittance' => [],
     ];
     pdf__body($pdf, $company, $cols, $rows, $y, $closing, 'Receipt ' . $receiptNo);

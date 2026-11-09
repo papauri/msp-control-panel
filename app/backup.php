@@ -36,11 +36,23 @@ function backup_state_path(): string
     return $dir . '/backup-state.json';
 }
 
-/** Read-only snapshot of the state. */
+/** Read-only snapshot of the state, read under a shared lock so a write in progress is never seen half done. */
 function backup_state(): array
 {
     $p = backup_state_path();
-    $raw = is_readable($p) ? (string)@file_get_contents($p) : '';
+    $fh = is_file($p) ? @fopen($p, 'r') : false; // a read never creates the file
+    if ($fh === false) {
+        return [];
+    }
+    try {
+        if (!flock($fh, LOCK_SH)) {
+            return [];
+        }
+        $raw = (string)stream_get_contents($fh);
+        flock($fh, LOCK_UN);
+    } finally {
+        fclose($fh);
+    }
     $s = $raw !== '' ? json_decode($raw, true) : null;
     return is_array($s) ? $s : [];
 }
@@ -202,6 +214,38 @@ function backup_panel_list(): array
 }
 
 /**
+ * Compresses (gzip, chunk by chunk as they arrive) whatever $produce passes to the emit callback it is given, then
+ * encrypts it. Only the compressed text is held in memory and nothing unencrypted ever touches the disk. Same file
+ * format as backup_encrypt(gzencode(...)), so every older backup still opens. Null when compression or encryption fails.
+ */
+function backup_seal_stream(callable $produce, string $key): ?string
+{
+    $z = deflate_init(ZLIB_ENCODING_GZIP, ['level' => 6]);
+    if ($z === false) {
+        return null;
+    }
+    $gz = '';
+    $produce(static function (string $chunk) use ($z, &$gz): void {
+        if ($chunk === '') {
+            return;
+        }
+        $out = deflate_add($z, $chunk, ZLIB_NO_FLUSH);
+        if ($out === false) {
+            throw new RuntimeException('compression failed');
+        }
+        $gz .= $out;
+    });
+    $end = deflate_add($z, '', ZLIB_FINISH);
+    if ($end === false) {
+        return null;
+    }
+    $gz .= $end;
+    $blob = backup_encrypt($gz, $key);
+    unset($gz);
+    return $blob;
+}
+
+/**
  * Backs up the panel's own records (every cp_ table) to an encrypted file. Never stores them unencrypted: with no
  * signing key it refuses. Keeps the newest BACKUP_KEEP. @return array{ok:bool,name:string,size:int,error:string}
  */
@@ -212,13 +256,11 @@ function backup_panel_run(PDO $pdo): array
         return ['ok' => false, 'name' => '', 'size' => 0, 'error' => 'There is no signing key yet, so the panel cannot encrypt its backup (create it on the Signing key page).'];
     }
     try {
-        $sql = '';
-        dbexport_write($pdo, static function (string $chunk) use (&$sql): void {
-            $sql .= $chunk;
-        });
-        $gz = gzencode($sql, 6);
-        $blob = $gz === false ? null : backup_encrypt($gz, $key);
-        unset($sql, $gz);
+        // Rows come from an unbuffered cursor (dbexport_write) and are compressed as they arrive: memory stays at
+        // about the size of the compressed backup, however large the tables grow.
+        $blob = backup_seal_stream(static function (callable $emit) use ($pdo): void {
+            dbexport_write($pdo, $emit);
+        }, $key);
         if ($blob === null || backup_decrypt($blob, $key) === null) {
             return ['ok' => false, 'name' => '', 'size' => 0, 'error' => 'The backup could not be encrypted.'];
         }
@@ -260,30 +302,60 @@ function backup_panel_open(string $name): ?string
  * The daily / one-button / cron run: backs up the panel's own records and asks every business to back up.
  * $why: 'button' | 'first_sign_in' | 'cron'. Nudging the businesses (so they check in now) is left to the caller,
  * after its response has been sent. @return array{panel:array,asked:int[]}
+ * Today counts as done only when the panel's backup worked. When it failed, or this throws, the day this run claimed
+ * with backup_claim_today() ($claimedDay) is given back, so the cron job or the next sign-in tries again.
  */
-function backup_run_all(PDO $pdo, string $why, ?int $adminId): array
+function backup_run_all(PDO $pdo, string $why, ?int $adminId, ?string $claimedDay = null): array
 {
-    $panel = backup_panel_run($pdo);
-    $asked = backup_request($pdo, null);
-    backup_state_update(static function (array &$s) use ($panel, $why): void {
-        $s['last_run'] = ['at' => time(), 'why' => $why, 'panel_ok' => $panel['ok'], 'panel_error' => $panel['error']];
-        $s['auto_day'] = date('Y-m-d'); // today's run is done, whoever started it: the first sign-in does not repeat it
-    });
+    try {
+        $panel = backup_panel_run($pdo);
+        $asked = backup_request($pdo, null);
+        backup_state_update(static function (array &$s) use ($panel, $why, $claimedDay): void {
+            $s['last_run'] = ['at' => time(), 'why' => $why, 'panel_ok' => $panel['ok'], 'panel_error' => $panel['error']];
+            if ($panel['ok']) {
+                $s['auto_day'] = date('Y-m-d'); // today's run is done, whoever started it: the first sign-in does not repeat it
+            } elseif ($claimedDay !== null && ($s['auto_day'] ?? '') === $claimedDay) {
+                unset($s['auto_day']); // only this run's own claim: an earlier good run today stays counted
+            }
+        });
+    } catch (Throwable $e) {
+        if ($claimedDay !== null) {
+            backup_release_day($claimedDay);
+        }
+        throw $e;
+    }
     audit_log($pdo, $adminId, 'backup_run', null, null, ['why' => $why, 'panel_backup' => $panel['ok'] ? $panel['name'] : ('failed: ' . $panel['error']), 'businesses_asked' => count($asked)]);
     return ['panel' => $panel, 'asked' => $asked];
 }
 
-/** True once per calendar day (panel time zone): claims today's automatic run. */
-function backup_claim_today(): bool
+/**
+ * Claims today's automatic run (panel time zone). Returns the day claimed ('Y-m-d'), or null when today is already
+ * claimed or done. Pass the day on to backup_run_all() / backup_release_day() so a run that never happened is not counted.
+ */
+function backup_claim_today(): ?string
 {
     $today = date('Y-m-d');
-    return (bool)backup_state_update(static function (array &$s) use ($today): bool {
+    return backup_state_update(static function (array &$s) use ($today): ?string {
         if (($s['auto_day'] ?? '') === $today) {
-            return false;
+            return null;
         }
         $s['auto_day'] = $today;
-        return true;
+        return $today;
     });
+}
+
+/** Gives back a claimed day (its run failed or could not start). Never clears another day's mark. Never throws. */
+function backup_release_day(string $day): void
+{
+    try {
+        backup_state_update(static function (array &$s) use ($day): void {
+            if (($s['auto_day'] ?? '') === $day) {
+                unset($s['auto_day']);
+            }
+        });
+    } catch (Throwable $e) {
+        error_log('backup_release_day: ' . $e->getMessage());
+    }
 }
 
 /** Nudges each business so it checks in now and sees the request (each call waits at most 4 s). */
@@ -295,21 +367,32 @@ function backup_nudge_all(PDO $pdo, array $ids): void
     }
 }
 
-/** Ends the response to the browser so slow work afterwards never makes the person wait (same as back_to in tenant.php). */
-function backup_finish_response(): void
+/** True when this server can end the response to the browser early (PHP-FPM or LiteSpeed). */
+function backup_can_detach(): bool
+{
+    return function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
+}
+
+/**
+ * Ends the response to the browser so slow work afterwards never makes the person wait (same as back_to in
+ * tenant.php). Returns true only when the browser was truly let go. On false the caller skips its slow work (the
+ * cron job and the next sign-in pick it up), because the browser would sit waiting for it.
+ */
+function backup_finish_response(): bool
 {
     @ignore_user_abort(true);
     if (session_status() === PHP_SESSION_ACTIVE) {
         session_write_close();
     }
     if (function_exists('fastcgi_finish_request')) {
-        fastcgi_finish_request();
-    } elseif (function_exists('litespeed_finish_request')) {
-        litespeed_finish_request();
-    } else {
-        while (ob_get_level() > 0) {
-            @ob_end_flush();
-        }
-        @flush();
+        return fastcgi_finish_request() === true;
     }
+    if (function_exists('litespeed_finish_request')) {
+        return litespeed_finish_request() === true;
+    }
+    while (ob_get_level() > 0) {
+        @ob_end_flush();
+    }
+    @flush();
+    return false;
 }

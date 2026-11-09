@@ -14,9 +14,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $s = static fn(string $k): string => isset($_POST[$k]) && is_string($_POST[$k]) ? $_POST[$k] : '';
     $action = $s('action');
     if ($action === 'run_all') {
+        if (!backup_can_detach()) {
+            // This server cannot send the page first. The panel's own backup is quick and is what was asked for, so it
+            // runs now; the slow part (nudging each business, up to 4 s each) is skipped: they see the request at
+            // their next hourly check-in.
+            try {
+                $run = backup_run_all($pdo, 'button', $me);
+                flash_set($run['panel']['ok'] ? 'info' : 'error', $run['panel']['ok']
+                    ? 'Backup done: the panel\'s own records are saved, and every business has been asked to back itself up at its next check-in (within the hour).'
+                    : 'The panel\'s own backup failed: ' . $run['panel']['error'] . ' Every business has still been asked to back itself up.');
+            } catch (Throwable $e) {
+                error_log('backup button: ' . $e->getMessage());
+                flash_set('error', 'The backup could not be run. Nothing was changed; try again or run php scripts/backup-all.php.');
+            }
+            header('Location: backups.php');
+            exit;
+        }
         flash_set('info', 'Backup started: the panel\'s own records now, and every business has been asked to back itself up. Businesses report back within the hour; refresh this page to see.');
         header('Location: backups.php');
-        backup_finish_response();
+        if (!backup_finish_response()) {
+            error_log('backup button: the response could not be ended early, so the backup was skipped (the cron job runs it).');
+            exit;
+        }
         try {
             $run = backup_run_all($pdo, 'button', $me);
             backup_nudge_all($pdo, $run['asked']);
@@ -36,8 +55,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         audit_log($pdo, $me, 'backup_asked', $tid, null, null);
         flash_set('info', 'Asked. The business backs up at its next check-in (straight away when it is online, otherwise within the hour).');
         header('Location: backups.php');
-        backup_finish_response();
-        backup_nudge_all($pdo, $asked);
+        if (backup_finish_response()) { // otherwise the business still sees the request at its next hourly check-in
+            backup_nudge_all($pdo, $asked);
+        }
         exit;
     }
     if ($action === 'download') {

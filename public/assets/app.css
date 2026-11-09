@@ -47,6 +47,8 @@ table.list td.col-plan .trunc { max-width: 18ch; }
 .pill-grace { background: #fff3cd; color: #7a5b00; }
 .pill-read_only { background: #fde0c5; color: #8a4200; }
 .pill-suspended { background: #f8d7da; color: #8a1f1f; }
+.pill-trial { background: #dbe7f5; color: #1b3a5c; }
+.pill-trial-ended { background: #f8d7da; color: #8a1f1f; }
 .tag { font-size: .75rem; color: #5b6675; border: 1px solid #b8bec8; border-radius: 3px; padding: 0 .3rem; }
 .pager a { margin-right: 1rem; }
 @media (max-width: 640px) {
@@ -108,4 +110,65 @@ h2.spaced { margin-top: 1rem; }
   .bill-totals { max-width: none; }
   table.bill-lines .in-qty, table.bill-lines .in-price, table.bill-lines .in-item, table.bill-lines .in-desc { width: 100%; min-width: 0; }
   form.bill-filter select, form.bill-filter input { min-width: 0; }
+}
+/* Reports (agent REPORTS, 2026-11-09) */
+form.rep-period { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: flex-end; margin: 0 0 .5rem; }
+form.rep-period label { margin: 0; }
+form.rep-period select, form.rep-period input { min-width: 11rem; }
+.rep-help { margin: .25rem 0 .75rem; }
+.rep-actions { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; margin: .5rem 0 0; }
+.rep-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; margin: 1rem 0; }
+.rep-card h2 { margin: 0 0 .5rem; font-size: 1.05rem; }
+.rep-figs { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: .75rem 1.25rem; }
+.rep-figs div { display: flex; flex-direction: column; min-width: 0; }
+.rep-figs dt { font-size: .8rem; color: #5b6675; cursor: help; }
+.rep-figs dd { margin: 0; font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
+.rep-figs dd small { font-size: .75rem; font-weight: 400; }
+.rep-head { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; justify-content: space-between; margin: 1.5rem 0 0; }
+.rep-head h2 { margin: 0; }
+.rep-partial { cursor: help; }
+table.rep-table tfoot td { border-top: 2px solid #b8bec8; font-weight: 600; }
+@media (max-width: 640px) {
+  form.rep-period select, form.rep-period input { min-width: 0; width: 100%; }
+  .rep-figs { grid-template-columns: 1fr; }
+}
+
+/* Automations and Outbox (2026-11-09). */
+.au-head { display: flex; align-items: center; gap: .6rem; }
+.au-head h2 { margin: 0; }
+.au-meta { display: flex; flex-wrap: wrap; gap: .25rem 1.25rem; margin: .4rem 0 .6rem; }
+dl.au-preview { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .9rem; margin: 0 0 .5rem; }
+dl.au-preview dt { font-weight: 600; color: #5b6675; }
+dl.au-preview dd { margin: 0; overflow-wrap: anywhere; }
+pre.au-text { max-height: 12rem; overflow-y: auto; font-family: inherit; font-size: .9rem; border-left: 3px solid #d9dde3; }
+form.au-decide textarea { max-width: 640px; }
+.au-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.au-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1.5rem; }
+.au-desc { flex: 1 1 22rem; }
+.au-desc p { margin: .2rem 0; }
+form label.au-mode { flex: 0 1 18rem; margin: 0; }
+.au-auto details { margin-top: .5rem; }
+ul.au-sent { margin: .4rem 0 0; padding-left: 1.1rem; }
+ul.au-sent li { margin: .15rem 0; overflow-wrap: anywhere; }
+.au-none { margin: .4rem 0 0; }
+.au-result h3 { font-size: 1rem; margin: .75rem 0 .25rem; }
+@media (max-width: 640px) {
+  dl.au-preview { grid-template-columns: 1fr; }
+  form label.au-mode { flex-basis: 100%; }
+}
+
+/* Clients, billing board, recurring invoices (2026-11-09, Part 2). */
+.bill-board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .75rem; }
+.bill-board-item { display: flex; flex-direction: column; gap: .15rem; padding: .6rem .75rem; border: 1px solid #d9dde3; border-radius: 6px; background: #fafbfc; }
+.bill-board-item strong { font-size: 1.4rem; line-height: 1.2; }
+.bill-board-item span { font-size: .9rem; overflow-wrap: anywhere; }
+.bill-board-alert { border-color: #e2a3a3; background: #fdf3f3; }
+.bill-board-alert strong { color: #a12626; }
+.bill-profit { margin: .25rem 0 .5rem; }
+.bill-profit strong { margin-right: .75rem; }
+fieldset.bill-newclient { max-width: none; }
+table.bill-lines .in-cost { width: 8rem; text-align: right; }
+.bill-contact .pre { margin: .5rem 0; }
+@media (max-width: 640px) {
+  table.bill-lines .in-cost { width: 100%; }
 }

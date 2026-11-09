@@ -28,7 +28,7 @@ if (!$rows) {
         . view_th('Domain', 'The website address the customer system must report. A different domain is refused.', 'Address it must report')
         . view_th('Plan', 'The package the business pays for.', 'Package paid for')
         . view_th('Paid until', 'The last day covered by payments. After this date the step-down begins.', 'Last day covered')
-        . view_th('Status', 'What the customer system is told today: active, grace (warning banner), read only, or suspended (admin locked). "override" means set by hand.', 'Told to customer today')
+        . view_th('Status', 'What the customer system is told today: active, grace (warning banner), read only, or suspended (admin locked). "override" means set by hand. A free trial shows the days left, or "Trial ended".', 'Told to customer today')
         . view_th('Last check-in', 'When the customer system last contacted this panel. A dash means it never has, or only failed attempts.', 'Last contact')
         . view_th('PMS version', 'The software version the business reported at its last check-in.', 'Reported at check-in')
         . '</tr></thead><tbody>';
@@ -47,7 +47,7 @@ if (!$rows) {
             . '<td data-label="Domain" class="col-domain">' . ($r['domain'] !== null && $r['domain'] !== '' ? view_trunc($r['domain']) : view_empty()) . '</td>'
             . '<td data-label="Plan" class="col-plan">' . ($r['plan'] !== null && $r['plan'] !== '' ? view_trunc($r['plan']) : view_empty()) . '</td>'
             . '<td data-label="Paid until" class="nw">' . ($r['paid_until'] ? e($r['paid_until']) : view_empty()) . '</td>'
-            . '<td data-label="Status" class="nw">' . view_pill($st, $hasOverride) . '</td>'
+            . '<td data-label="Status" class="nw">' . view_pill($st, $hasOverride) . (trial_words($r, $today) !== '' ? ' ' . view_trial_tag(trial_words($r, $today)) : '') . '</td>'
             . '<td data-label="Last check-in" class="nw">' . ($r['last_check'] ? e($r['last_check']) : view_empty()) . '</td>'
             . '<td data-label="PMS version" class="nw">' . ($r['last_version'] !== null && $r['last_version'] !== '' ? e($r['last_version']) : view_empty()) . '</td></tr>';
     }

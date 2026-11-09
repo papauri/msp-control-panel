@@ -14,8 +14,16 @@ function view_head(string $title, bool $nav = true): void
         . '<title>' . e($title) . ' - Licence panel</title>'
         . '<link rel="stylesheet" href="assets/app.css"><script src="assets/app.js" defer></script></head><body>';
     if ($nav) {
+        // Outbox: emails waiting for approval (one cheap count; the nav still renders if it fails).
+        $waiting = 0;
+        try {
+            $waiting = (int)db()->query("SELECT COUNT(*) FROM cp_outbox WHERE status = 'pending'")->fetchColumn();
+        } catch (Throwable $ex) {
+            $waiting = 0;
+        }
         echo '<header class="top"><strong class="brand">Licence panel</strong><nav>'
-            . '<a href="index.php">Businesses</a><a href="tenant.php">Add business</a><a href="invoices.php">Billing</a><a href="audit.php">Audit log</a><a href="backups.php">Backups</a><a href="users.php">Users</a><a href="settings.php">Settings</a><a href="keys.php">Signing key</a><a href="account.php">My account</a><a href="guide.php">Guide</a></nav>'
+            . '<a href="index.php">Businesses</a><a href="tenant.php">Add business</a><a href="invoices.php">Billing</a><a href="clients.php">Clients</a><a href="reports.php">Reports</a>'
+            . '<a href="outbox.php">Outbox' . ($waiting > 0 ? ' (' . $waiting . ')' : '') . '</a><a href="automations.php">Automations</a><a href="audit.php">Audit log</a><a href="backups.php">Backups</a><a href="users.php">Users</a><a href="settings.php">Settings</a><a href="keys.php">Signing key</a><a href="account.php">My account</a><a href="guide.php">Guide</a><a href="guide-sales.php">Sales guide</a></nav>'
             . '<form method="post" action="logout.php" class="inline">' . csrf_field()
             . '<button type="submit" class="link">Sign out</button></form></header>';
     }
@@ -40,6 +48,15 @@ function view_pill(string $status, bool $override = false): string
     $label = $labels[$status] ?? $status;
     return '<span class="pill pill-' . e($status) . '">' . e($label) . '</span>'
         . ($override ? ' <span class="tag">override</span>' : '');
+}
+
+// Free-trial words ("Free trial – 12 days left" / "Trial ended") as a pill (Part 3). '' gives ''.
+function view_trial_tag(string $words): string
+{
+    if ($words === '') {
+        return '';
+    }
+    return '<span class="pill ' . ($words === 'Trial ended' ? 'pill-trial-ended' : 'pill-trial') . '">' . e($words) . '</span>';
 }
 
 // Column header: name, a short one-line helper underneath, and the full

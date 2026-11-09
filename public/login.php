@@ -21,21 +21,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if ($r === 'ok') {
         // The first sign-in of the day starts the daily backup (owner 2026-11-09), after the page has been sent
-        $daily = false;
-        try {
-            $daily = backup_claim_today();
-        } catch (Throwable $e) {
-            error_log('daily backup claim: ' . $e->getMessage());
+        // Only where the page can be sent first: otherwise the cron job (or a sign-in on a server that can) runs it,
+        // and today is not claimed so nothing is skipped.
+        $day = null;
+        if (backup_can_detach()) {
+            try {
+                $day = backup_claim_today();
+            } catch (Throwable $e) {
+                error_log('daily backup claim: ' . $e->getMessage());
+            }
         }
-        if ($daily) {
+        if ($day !== null) {
             flash_set('info', "Today's backup has started: the panel's own records, and every business has been asked to back itself up. See Backups.");
         }
         header('Location: index.php');
-        if ($daily) {
+        if ($day !== null) {
             $who = (int)$_SESSION['admin_id'];
-            backup_finish_response();
+            if (!backup_finish_response()) {
+                backup_release_day($day); // the browser would wait: give today back for the cron job or the next sign-in
+                exit;
+            }
             try {
-                $run = backup_run_all($pdo, 'first_sign_in', $who);
+                $run = backup_run_all($pdo, 'first_sign_in', $who, $day); // gives today back itself when it fails
                 backup_nudge_all($pdo, $run['asked']);
             } catch (Throwable $e) {
                 error_log('daily backup: ' . $e->getMessage());

@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $in[$k] = $_POST[$k];
                 }
             }
-            $in['auto_reminders'] = $s('auto_reminders') === '1' ? '1' : '0';
+            unset($in['auto_reminders']); // the reminder mode (off / approve / auto) is set on automations.php
             [$errors, $clean] = billing_settings_validate($in);
             if (!$errors) {
                 billing_settings_save($pdo, $clean, $adminId);
@@ -66,7 +66,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-billing_seed_catalog($pdo); // first use only: fills the saved items with the usual lines
+billing_seed_catalog($pdo, $adminId); // first use only: fills the saved items with the usual lines (locked, audited, once)
+billing_seed_plans($pdo, $adminId);   // Part 3, first use only: the usual plans at price 0 when no item is a plan yet
 $set = billing_settings_all();
 $v = static function (string $k) use ($form, $set): string {
     return is_array($form) && array_key_exists($k, $form) ? (string)$form[$k] : (string)($set[$k] ?? '');
@@ -114,34 +115,65 @@ echo '<form method="post" action="settings.php">' . csrf_field() . '<input type=
     . '<p class="muted">Days before the due date, then 0 for the due date itself, then days after it. '
     . 'For example <code>3,0,7,14</code> reminds 3 days before, on the day, and 7 and 14 days after. Without a 0, every number counts as days after the due date. '
     . 'Only sent invoices with a balance get reminders, at most one a day.</p>'
-    . '<label class="check"><input type="checkbox" name="auto_reminders" value="1"' . ($v('auto_reminders') === '1' ? ' checked' : '') . '> Send reminders automatically (daily cron job)</label>'
+    . '<p class="muted">Whether reminders go out automatically, wait in the Outbox, or are off is set on <a href="automations.php">Automations</a>.</p>'
     . '</section>'
+    . '<section class="card" id="trials"><h2>Free trials and plans</h2><div class="bill-grid">'
+    . $text('trial_grace_days', 'After a trial: grace days (everything works)', 3)
+    . $text('trial_readonly_days', 'After a trial: view-only days, then paused', 3)
+    . $text('trial_reminder_days', 'Trial reminder days before the end', 30)
+    . $text('default_grace_days', 'Normal grace days (after converting)', 3)
+    . $text('default_readonly_days', 'Normal read-only days (after converting)', 3)
+    . $text('annual_discount_pct', 'Annual discount for yearly billing (%)', 6)
+    . '</div><p class="muted">A trial sets paid until to its last day; after it the business gets the grace and view-only days above, then the staff area pauses '
+    . '(data is never deleted). Reminder days: for example <code>7,3,1</code> emails 7, 3 and 1 days before the end. Converting a trial restores the normal days. '
+    . 'The annual discount is shown as a discount line when a monthly plan is billed once a year. Which trial emails go out is set on <a href="automations.php">Automations</a>.</p></section>'
     . '<section class="card"><h2>Email signature</h2>' . $area('email_signature', 'Signature (under every email)', 4, 1000) . '</section>'
     . '<p><button type="submit">Save settings</button></p></form>';
 
 // Saved items
 $items = billing_catalog($pdo, false);
 echo '<section class="card" id="items"><h2>Saved items</h2>'
-    . '<p class="muted">Lines you add often. Pick them on an invoice or quotation with "Saved item". Untick Active to hide one without losing it.</p>';
+    . '<p class="muted">Products and services you sell often (hosting, hardware, software…). Pick them on an invoice or quotation with "Saved item". '
+    . 'The cost price is what one costs you: it is copied to the invoice line and gives the profit (never printed). Untick Active to hide one without losing it.</p>';
 $itemForm = static function (?array $it): string {
     $id = $it ? (int)$it['id'] : 0;
+    $cat = (string)($it['category'] ?? 'service');
+    $opts = '';
+    foreach (billing_catalog_categories() as $k => $l) {
+        $opts .= '<option value="' . e($k) . '"' . ($cat === $k ? ' selected' : '') . '>' . e($l) . '</option>';
+    }
     return '<form method="post" action="settings.php#items" class="bill-item-form">' . csrf_field()
         . '<input type="hidden" name="action" value="save_item"><input type="hidden" name="item_id" value="' . $id . '">'
+        . '<div class="bill-grid"><label>Category<select name="category">' . $opts . '</select></label>'
+        . '<label>SKU / code (optional)<input type="text" name="sku" maxlength="60" value="' . e($it['sku'] ?? '') . '"></label></div>'
         . '<label>Item<input type="text" name="item" required maxlength="190" value="' . e($it['item'] ?? '') . '"></label>'
         . '<label>Description<textarea name="description" rows="2" maxlength="2000">' . e($it['description'] ?? '') . '</textarea></label>'
-        . '<label>Unit price<input type="text" name="unit_price" inputmode="decimal" required value="' . e($it ? number_format((float)$it['unit_price'], 2, '.', '') : '') . '"></label>'
+        . '<div class="bill-grid"><label>Unit price<input type="text" name="unit_price" inputmode="decimal" required value="' . e($it ? number_format((float)$it['unit_price'], 2, '.', '') : '') . '"></label>'
+        . '<label>Unit (for example month, piece, hour)<input type="text" name="unit" maxlength="20" value="' . e($it['unit'] ?? '') . '"></label>'
+        . '<label>Cost price (yours, optional)<input type="text" name="cost_price" inputmode="decimal" value="' . e($it && $it['cost_price'] !== null ? number_format((float)$it['cost_price'], 2, '.', '') : '') . '"></label></div>'
         . '<label>Currency<input type="text" name="currency" required maxlength="3" value="' . e($it['currency'] ?? billing_setting('default_currency')) . '"></label>'
+        . '<label>Plan (bill this every…)<select name="billing_interval"><option value="">Not a plan (one-off item)</option>'
+        . implode('', array_map(static fn($m, $l) => '<option value="' . $m . '"' . ((int)($it['billing_interval'] ?? 0) === $m ? ' selected' : '') . '>' . e($l) . ' (' . e(plan_interval_words($m)) . ')</option>',
+            array_keys(PLAN_INTERVALS), PLAN_INTERVALS)) . '</select></label>'
         . '<label>Order<input type="number" name="sort" min="0" max="9999" value="' . e((string)($it['sort'] ?? '0')) . '"></label>'
         . '<label class="check"><input type="checkbox" name="is_active" value="1"' . (!$it || (int)$it['is_active'] === 1 ? ' checked' : '') . '> Active</label>'
         . '<button type="submit">' . ($it ? 'Save item' : 'Add item') . '</button></form>';
 };
 if ($items) {
-    echo '<div class="scroll"><table><thead><tr>' . view_th('Item', 'Name printed in the Item column.') . view_th('Description', 'Printed beside the item.')
-        . view_th('Unit price', 'Price of one.') . view_th('Active', 'Shown in the Saved item list.') . view_th('', 'Change this item.', 'Edit')
+    $cats = billing_catalog_categories();
+    echo '<div class="scroll"><table><thead><tr>' . view_th('Category', 'Kind of product or service.') . view_th('Item', 'Name printed in the Item column.')
+        . view_th('SKU', 'Your product code.') . view_th('Description', 'Printed beside the item.')
+        . view_th('Unit price', 'Price of one.') . view_th('Cost', 'What one costs you (never printed).')
+        . view_th('Plan', 'A plan is billed every 1, 3 or 12 months: pick it with Subscribe on a client page, or when converting a free trial.', 'Billed every')
+        . view_th('Active', 'Shown in the Saved item list.') . view_th('', 'Change this item.', 'Edit')
         . '</tr></thead><tbody>';
     foreach ($items as $it) {
-        echo '<tr><td data-label="Item">' . e($it['item']) . '</td><td data-label="Description">' . (($it['description'] ?? '') !== '' ? view_trunc($it['description']) : view_empty()) . '</td>'
-            . '<td data-label="Unit price" class="nw num">' . e(billing_money((float)$it['unit_price'], $it['currency'])) . '</td>'
+        echo '<tr><td data-label="Category">' . e($cats[$it['category']] ?? $it['category']) . '</td><td data-label="Item">' . e($it['item']) . '</td>'
+            . '<td data-label="SKU" class="nw">' . (($it['sku'] ?? '') !== '' ? e($it['sku']) : view_empty()) . '</td>'
+            . '<td data-label="Description">' . (($it['description'] ?? '') !== '' ? view_trunc($it['description']) : view_empty()) . '</td>'
+            . '<td data-label="Unit price" class="nw num">' . e(billing_money((float)$it['unit_price'], $it['currency'])) . (($it['unit'] ?? '') !== '' ? ' <span class="muted">/ ' . e($it['unit']) . '</span>' : '') . '</td>'
+            . '<td data-label="Cost" class="nw num">' . ($it['cost_price'] !== null ? e(billing_money((float)$it['cost_price'], $it['currency'])) : view_empty()) . '</td>'
+            . '<td data-label="Plan" class="nw">' . ($it['billing_interval'] !== null ? e(PLAN_INTERVALS[(int)$it['billing_interval']] ?? plan_interval_words((int)$it['billing_interval'])) : view_empty()) . '</td>'
             . '<td data-label="Active">' . ((int)$it['is_active'] === 1 ? '<span class="pill pill-active">Active</span>' : '<span class="pill pill-suspended">Hidden</span>') . '</td>'
             . '<td data-label="Edit"><details><summary>Edit</summary>' . $itemForm($it) . '</details></td></tr>';
     }

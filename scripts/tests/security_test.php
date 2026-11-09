@@ -89,4 +89,42 @@ $_SESSION = [];
 new_key_purge();
 t_ok('nothing to do without a key', $_SESSION === []);
 
+// ── Unknown emails take the same path as known ones (timing) ──
+t_ok('the dummy sealed value looks exactly like a sealed secret', totp_secret_is_sealed(AUTH_DUMMY_SEALED));
+t_ok('the dummy sealed value is real base64 of 48 bytes (decrypt really runs)', strlen((string)base64_decode(AUTH_DUMMY_SEALED, true)) === 48);
+t_eq('no signing key opens the dummy sealed value', null, totp_open(AUTH_DUMMY_SEALED, $kA));
+t_ok('the dummy code secret is well formed (the code check really runs)', base32_decode_str(AUTH_DUMMY_TOTP) !== false && strlen((string)base32_decode_str(AUTH_DUMMY_TOTP)) === 20);
+t_eq('the dummy code check never passes, even with its own current code', false,
+    auth_dummy_code_check(totp_code((string)base32_decode_str(AUTH_DUMMY_TOTP), intdiv(time(), 30))));
+$known = microtime(true);
+for ($i = 0; $i < 50; $i++) {
+    totp_verify((string)totp_open((string)$sealed, $kA), '123456', time(), 1);
+}
+$known = microtime(true) - $known;
+$unknown = microtime(true);
+for ($i = 0; $i < 50; $i++) {
+    totp_open(AUTH_DUMMY_SEALED, $kA);
+    totp_verify(AUTH_DUMMY_TOTP, '123456', time(), 1);
+}
+$unknown = microtime(true) - $unknown;
+t_ok('dummy decrypt + code check is not wildly slower than the real one', $unknown < $known * 5 + 0.01);
+
+// ── "Sign-in blocked" audit note: once per lockout bucket, never the email ──
+$nb = auth_blocked_note_bucket($b1);
+t_ok('note bucket fits the 100-character column', strlen($nb) <= 100);
+t_ok('note bucket differs from the lockout bucket itself (its own counter)', $nb !== $b1);
+t_ok('each lockout bucket has its own note', $nb !== auth_blocked_note_bucket(auth_fail_bucket('other@example.com', '203.0.113.5')));
+t_ok('the per-address limit has its own note', auth_blocked_note_bucket('login-ip:203.0.113.5') !== auth_blocked_note_bucket('login-ip:198.51.100.7'));
+t_ok('note bucket holds neither email nor address', strpos($nb, 'owner') === false && strpos(auth_blocked_note_bucket('login-ip:203.0.113.5'), '203.0') === false);
+
+// ── reset-2fa.php: a new secret ends every session of that admin (fingerprint) ──
+$hash = auth_hash_password('correct horse battery');
+$before = totp_seal(totp_generate_secret(), $kA);
+$after = totp_seal(totp_generate_secret(), $kA);
+$fpOld = auth_fp($hash, (string)$before);
+t_ok('after reset-2fa (new sealed secret) the old session fingerprint no longer matches', !hash_equals(auth_fp($hash, (string)$after), $fpOld));
+$plainOld = totp_generate_secret();
+t_ok('same with plain secrets (no signing key on the server)', !hash_equals(auth_fp($hash, totp_generate_secret()), auth_fp($hash, $plainOld)));
+t_ok('the fingerprint is stable while nothing changes (no false sign-outs)', hash_equals(auth_fp($hash, (string)$before), $fpOld));
+
 t_done('security');

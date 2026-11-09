@@ -2,7 +2,8 @@
 // Licence check-in endpoint. POST JSON only, no cookies, no sessions.
 // Request:  {"tenant": "<slug>", "domain": "<site host>", "key": "<api key>", "version": "<pms version>", "backup": {...optional, its own backup state}}
 // The signed payload also carries backup_requested_at (2026-11-09): when the panel last asked this business to back up.
-// The signed payload also carries business_type and modules (licensed module keys) for the PMS to enforce.
+// The signed payload also carries business_type and modules (licensed module keys) for the PMS to enforce,
+// and trial (bool) / trial_until (Y-m-d|null) for the free-trial wording on the PMS (BILLING.md Part 3).
 // Response: {"payload": base64url(JSON), "sig": base64url(DER ECDSA P-256/SHA-256 over the JSON bytes)}
 
 require_once __DIR__ . '/../../app/bootstrap.php';
@@ -139,6 +140,9 @@ $payload = [
     'issued_at' => $now,
     'valid_until' => $now + LICENCE_VALID_SECONDS,
     'backup_requested_at' => $backupAsk,
+    // Part 3 (2026-11-09): free trial. trial = true while trial_until is set and not converted. Old sites ignore both.
+    'trial' => !empty($tenant['trial_until']) && empty($tenant['trial_converted_at']),
+    'trial_until' => !empty($tenant['trial_until']) ? (string)$tenant['trial_until'] : null,
 ];
 $token = signing_make_token($payload, $privateKey);
 if ($token === null) {

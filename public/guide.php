@@ -7,7 +7,7 @@ $admin = auth_require($pdo);
 view_head('Guide');
 ?>
 <h1>Licence panel guide</h1>
-<p class="muted">How to use this panel. Only signed-in admins can see this page.</p>
+<p class="muted">How to use this panel. Only signed-in admins can see this page. Invoices, quotations, payments, receipts, clients, free trials, plans, automations and reports: see the <a href="guide-sales.php">Sales and billing guide</a>.</p>
 
 <h2>1. What this panel does</h2>
 <p>This panel keeps a record of each business that uses the hotel system (PMS). It records what each business pays for.</p>
@@ -265,7 +265,7 @@ view_head('Guide');
 <p class="muted">Each business also has its own nightly backup. It is most reliable with its own cron job; see that system's backup guide.</p>
 
 <h2 id="move-database">14. Moving this panel to its own database</h2>
-<p>For now the panel's tables (all named <code>cp_...</code>) live in the Liwonde Sun database. Moving them to a database of their own takes about 10 minutes and nothing else changes.</p>
+<p>For now the panel's tables (all named <code>cp_...</code>) live in the Liwonde Sun database. Moving them to a database of their own takes about 10 minutes and nothing else changes. The complete checklist for moving to its own database <strong>and</strong> web address (including the email settings and the check script <code>php scripts/move-check.php</code>) is the file <strong>MOVING.md</strong> in the panel folder.</p>
 <ol>
     <li>cPanel &rarr; <strong>MySQL Databases</strong>: create a new database and a new user with a strong password; add the user to the database with <strong>All Privileges</strong>. Note the three names.</li>
     <li>In this panel: <strong>Backups</strong> &rarr; Download the panel's database &rarr; <em>As it is right now</em>. Do this just before the move, so nothing recorded afterwards is lost. Open the file in a text editor and check its last line reads <code>-- complete: every table exported</code>; if not, download it again.</li>

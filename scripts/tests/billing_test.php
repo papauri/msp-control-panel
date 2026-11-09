@@ -131,6 +131,6 @@ t_eq('settings errors', 3, count($err));
 t_eq('parse emails', ['a@b.com', 'c@d.org'], billing_parse_emails("a@b.com, c@d.org;A@B.com\n"));
 t_eq('bad emails', ['nope'], billing_parse_emails('a@b.com nope', true));
 t_eq('lines', ['Offaly,', 'Ireland'], billing_lines("Offaly,\r\n\r\nIreland\n"));
-t_eq('defaults complete', 20, count(billing_setting_defaults()));
+t_eq('defaults complete (Part 3 adds 6 trial and plan keys)', 26, count(billing_setting_defaults()));
 
 t_done('billing_test');

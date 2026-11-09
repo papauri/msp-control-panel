@@ -38,14 +38,32 @@ function dbexport_write(PDO $pdo, callable $emit): array
             continue;
         }
         $n = 0;
-        $st = $pdo->query('SELECT * FROM `' . $table . '`');
-        while (($row = $st->fetch(PDO::FETCH_ASSOC)) !== false) {
-            $cols = implode(', ', array_map(static fn($c) => '`' . str_replace('`', '``', (string)$c) . '`', array_keys($row)));
-            $vals = implode(', ', array_map(static fn($v) => $v === null ? 'NULL' : $pdo->quote((string)$v), array_values($row)));
-            $emit("INSERT INTO `$table` ($cols) VALUES ($vals);\n");
-            $n++;
+        // Unbuffered cursor: rows stream from the server one at a time instead of the whole table landing in memory.
+        // No other query may run on this connection until the cursor is closed (quote() is client-side, so it is
+        // fine), and the connection's own setting is put back afterwards, even when $emit throws.
+        $unbuffered = defined('PDO::MYSQL_ATTR_USE_BUFFERED_QUERY') && $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
+        $was = $unbuffered ? $pdo->getAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY) : null;
+        $st = null;
+        try {
+            if ($unbuffered) {
+                $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, false);
+            }
+            $st = $pdo->query('SELECT * FROM `' . $table . '`');
+            while (($row = $st->fetch(PDO::FETCH_ASSOC)) !== false) {
+                $cols = implode(', ', array_map(static fn($c) => '`' . str_replace('`', '``', (string)$c) . '`', array_keys($row)));
+                $vals = implode(', ', array_map(static fn($v) => $v === null ? 'NULL' : $pdo->quote((string)$v), array_values($row)));
+                $emit("INSERT INTO `$table` ($cols) VALUES ($vals);\n");
+                $n++;
+            }
+        } finally {
+            if ($st instanceof PDOStatement) {
+                $st->closeCursor();
+            }
+            $st = null;
+            if ($unbuffered) {
+                $pdo->setAttribute(PDO::MYSQL_ATTR_USE_BUFFERED_QUERY, $was);
+            }
         }
-        $st->closeCursor();
         $emit("-- $table: $n row(s)\n\n");
         $rows += $n;
     }

@@ -10,6 +10,10 @@ const AUTH_MIN_PASSWORD = 12;
 // Verified against when the e-mail is unknown, so timing does not reveal valid accounts.
 // Cost must match every password_hash() call (bcrypt cost 10) so unknown users verify in the same time.
 const AUTH_DUMMY_HASH = '$2y$10$mOZVDlz8IM98liPhXhrc0u9/sGkbkvddNirgPkZURGHGtKsGyQgD6';
+// Opened (and refused) when the e-mail is unknown, so an unknown email does the same key read + decrypt + code check
+// as a known one. 48 random bytes in base64: looks exactly like a sealed 2-step secret; no key ever opens it.
+const AUTH_DUMMY_SEALED = 'q3Zp0m7Yk1Vb9TgQfR2sWcXe8LhJuN4aD6oPiK5yBzM+H/tEjGvSlFrUdCwIxA0n';
+const AUTH_DUMMY_TOTP = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP'; // a fixed, well-formed secret for the matching code check
 
 function session_boot(): void
 {
@@ -67,6 +71,26 @@ function auth_fail_bucket(string $email, string $ip): string
     return 'login-fail:' . hash('sha256', $email . '|' . $ip);
 }
 
+/**
+ * The rate-limit bucket that makes a 'login_blocked' audit entry appear at most once per lockout bucket and window.
+ * Derived from the (already hashed) fail bucket, so it never holds the email; fits the 100-character column.
+ */
+function auth_blocked_note_bucket(string $failBucket): string
+{
+    return 'login-blocked:' . hash('sha256', $failBucket);
+}
+
+/**
+ * The work a known admin's sign-in does on the 2-step code (derive the box key from the signing key, open a sealed
+ * secret, check the code), done on fixed values for an unknown email. Always false; its only job is the timing.
+ */
+function auth_dummy_code_check(string $code): bool
+{
+    totp_open(AUTH_DUMMY_SEALED, keys_secret_box_key()); // never opens: no key sealed it
+    totp_verify(AUTH_DUMMY_TOTP, $code, time(), 1);
+    return false;
+}
+
 /** The usable base32 secret from the stored value (plain or sealed); null when sealed and the signing key cannot open it. */
 function auth_totp_secret(string $stored): ?string
 {
@@ -118,6 +142,9 @@ function auth_attempt(PDO $pdo, string $email, string $password, string $code): 
 {
     $ip = client_ip();
     if (!rate_limit_hit($pdo, 'login-ip:' . $ip, 10, 900)) {
+        if (rate_limit_hit($pdo, auth_blocked_note_bucket('login-ip:' . $ip), 1, 900)) {
+            audit_log($pdo, null, 'login_blocked', null, null, ['limit' => 'too many sign-in tries from this address']);
+        }
         return '';
     }
     $email = strtolower(trim($email));
@@ -126,6 +153,10 @@ function auth_attempt(PDO $pdo, string $email, string $password, string $code): 
     }
     $failBucket = auth_fail_bucket($email, $ip);
     if (rate_limit_count($pdo, $failBucket, AUTH_LOCK_MINUTES * 60) >= AUTH_MAX_FAILURES) {
+        // Noted once per lockout window: no email in the entry (audit_log keeps the address in its own column)
+        if (rate_limit_hit($pdo, auth_blocked_note_bucket($failBucket), 1, AUTH_LOCK_MINUTES * 60)) {
+            audit_log($pdo, null, 'login_blocked', null, null, ['limit' => 'too many wrong tries for one email from this address']);
+        }
         usleep(random_int(150000, 350000));
         return ''; // this email from this address only; the admin can still sign in from anywhere else
     }
@@ -148,8 +179,14 @@ function auth_attempt(PDO $pdo, string $email, string $password, string $code): 
         audit_log($pdo, (int)$admin['id'], 'setup_started', null, null, null);
         return 'setup';
     }
-    $secret = $admin ? auth_totp_secret((string)$admin['totp_secret']) : null;
-    $step = ($secret !== null && $secret !== '') ? totp_verify($secret, $code, time(), 1) : false;
+    if ($admin) {
+        $secret = auth_totp_secret((string)$admin['totp_secret']);
+        $step = ($secret !== null && $secret !== '') ? totp_verify($secret, $code, time(), 1) : false;
+    } else {
+        auth_dummy_code_check($code); // same key read, decrypt and code check as a known email: timing reveals nothing
+        $secret = null;
+        $step = false;
+    }
 
     if ($admin && $pwOk && $step !== false) {
         // Single-use codes: the step must be newer than the last one accepted. A plain secret is sealed in the same write.

@@ -5,6 +5,103 @@
 const BILLING_TOLERANCE = 0.005;
 
 // ---------------------------------------------------------------------------------------------------------------
+// Automation hooks (Part 2). Events are queued and fired only after the transaction that caused them has committed:
+// a function that opened its own transaction flushes after its commit; inside a caller's transaction the event waits
+// until that caller calls billing_events_flush() (or is dropped by billing_events_clear() on rollback).
+// automation_event() lives in app/automation.php (agent AUTOMATION); it is loaded only when an event fires.
+// ---------------------------------------------------------------------------------------------------------------
+
+// Master switch (tests turn it off so nothing can ever be sent).
+function billing_automation_enabled(?bool $set = null): bool
+{
+    static $on = true;
+    if ($set !== null) {
+        $on = $set;
+    }
+    return $on;
+}
+
+function billing_events_queue(?array $add = null, bool $take = false): array
+{
+    static $q = [];
+    if ($add !== null) {
+        $q[] = $add;
+    }
+    if ($take) {
+        $out = $q;
+        $q = [];
+        return $out;
+    }
+    return $q;
+}
+
+function billing_event(string $event, array $data): void
+{
+    billing_events_queue([$event, $data]);
+}
+
+function billing_events_clear(): void
+{
+    billing_events_queue(null, true);
+}
+
+function billing_events_flush(PDO $pdo): void
+{
+    $events = billing_events_queue(null, true);
+    if (!$events || !billing_automation_enabled() || $pdo->inTransaction()) {
+        return;
+    }
+    if (!function_exists('automation_event') && is_file(__DIR__ . '/automation.php')) {
+        require_once __DIR__ . '/automation.php';
+    }
+    if (!function_exists('automation_event')) {
+        return;
+    }
+    foreach ($events as [$event, $data]) {
+        try {
+            automation_event($pdo, $event, $data);
+        } catch (Throwable $e) {
+            error_log('automation_event ' . $event . ': ' . $e->getMessage());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// One-time form tokens (a double click on "Record payment" must not record it twice). Kept in the session.
+// ---------------------------------------------------------------------------------------------------------------
+
+function billing_once_issue(string $scope): string
+{
+    if (!isset($_SESSION) || !is_array($_SESSION)) {
+        $_SESSION = [];
+    }
+    $tok = bin2hex(random_bytes(16));
+    $list = isset($_SESSION['once'][$scope]) && is_array($_SESSION['once'][$scope]) ? $_SESSION['once'][$scope] : [];
+    $now = time();
+    foreach ($list as $k => $t) {
+        if ($now - (int)$t > 86400) {
+            unset($list[$k]);
+        }
+    }
+    $list[$tok] = $now;
+    if (count($list) > 50) {
+        $list = array_slice($list, -50, null, true);
+    }
+    $_SESSION['once'][$scope] = $list;
+    return $tok;
+}
+
+// True once per issued token; a repeat (double click, back + resubmit) returns false.
+function billing_once_consume(string $scope, string $token): bool
+{
+    if ($token === '' || !isset($_SESSION['once'][$scope][$token])) {
+        return false;
+    }
+    unset($_SESSION['once'][$scope][$token]);
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -36,6 +133,13 @@ function billing_setting_defaults(): array
         'auto_reminders' => '1',
         'brand_color' => '#D40000',
         'brand_navy' => '#1B3A5C',
+        // Free trials and plans (Part 3).
+        'trial_grace_days' => '0',
+        'trial_readonly_days' => '3',
+        'trial_reminder_days' => '7,3,1',
+        'default_grace_days' => '14',
+        'default_readonly_days' => '14',
+        'annual_discount_pct' => '0',
     ];
 }
 
@@ -131,6 +235,22 @@ function billing_settings_validate(array $in): array
         if ($clean['reminder_days'] !== '' && !preg_match('/^\d{1,3}(,\d{1,3})*$/', $clean['reminder_days'])) {
             $err[] = 'Reminder days must be whole numbers separated by commas, for example 3,0,7,14.';
         }
+    }
+    foreach (['trial_grace_days' => 'Grace days after a trial', 'trial_readonly_days' => 'Read-only days after a trial',
+        'default_grace_days' => 'Normal grace days', 'default_readonly_days' => 'Normal read-only days'] as $k => $label) {
+        if (isset($clean[$k]) && (!preg_match('/^\d{1,3}$/', $clean[$k]) || (int)$clean[$k] > 365)) {
+            $err[] = $label . ' must be a whole number from 0 to 365.';
+        }
+    }
+    if (isset($clean['trial_reminder_days'])) {
+        $clean['trial_reminder_days'] = preg_replace('/\s+/', '', $clean['trial_reminder_days']);
+        if ($clean['trial_reminder_days'] !== '' && (!preg_match('/^\d{1,2}(,\d{1,2})*$/', $clean['trial_reminder_days'])
+            || min(array_map('intval', explode(',', $clean['trial_reminder_days']))) < 1 || max(array_map('intval', explode(',', $clean['trial_reminder_days']))) > 90)) {
+            $err[] = 'Trial reminder days must be whole numbers from 1 to 90 separated by commas, for example 7,3,1.';
+        }
+    }
+    if (isset($clean['annual_discount_pct']) && !preg_match('/^\d{1,2}(\.\d{1,2})?$/', $clean['annual_discount_pct'])) {
+        $err[] = 'Annual discount must be a percentage from 0 to 99.99, for example 10.';
     }
     if (array_key_exists('auto_reminders', $clean)) {
         $clean['auto_reminders'] = $clean['auto_reminders'] === '1' ? '1' : '0';
@@ -291,6 +411,70 @@ function billing_balance(array $doc): float
     return round((float)($doc['total'] ?? 0) - (float)($doc['amount_paid'] ?? 0), 2);
 }
 
+/**
+ * Pure. Profit on a document's lines (owner only; never printed). A line's cost = qty x cost_price; lines without a cost
+ * price are unknown. complete = every line has a cost: profit = subtotal - discount - cost. Otherwise profit covers only
+ * the lines with a cost (line totals - their cost), discount ignored, and 'partial' is true.
+ * Returns ['cost','profit','margin' (% of the revenue it is measured against, null when 0),'complete','partial','unknown_lines'].
+ */
+function billing_profit(array $items, float $discount = 0.0): array
+{
+    $cost = 0.0;
+    $revKnown = 0.0;
+    $sub = 0.0;
+    $unknown = 0;
+    $known = 0;
+    foreach ($items as $it) {
+        $lt = isset($it['line_total']) ? round((float)$it['line_total'], 2) : billing_line_total((float)($it['qty'] ?? 0), (float)($it['unit_price'] ?? 0));
+        $sub = round($sub + $lt, 2);
+        $cp = $it['cost_price'] ?? null;
+        if ($cp === null || $cp === '') {
+            $unknown++;
+            continue;
+        }
+        $known++;
+        $cost = round($cost + billing_line_total((float)($it['qty'] ?? 0), (float)$cp), 2);
+        $revKnown = round($revKnown + $lt, 2);
+    }
+    $complete = $known > 0 && $unknown === 0;
+    $revenue = $complete ? round($sub - round($discount, 2), 2) : $revKnown;
+    $profit = round($revenue - $cost, 2);
+    return ['cost' => $cost, 'profit' => $profit, 'margin' => abs($revenue) > BILLING_TOLERANCE ? round($profit / $revenue * 100, 1) : null,
+        'complete' => $complete, 'partial' => $known > 0 && $unknown > 0, 'unknown_lines' => $unknown];
+}
+
+/**
+ * Pure. Amounts per currency, never added across currencies. $rows: each with 'currency' and the numeric $fields.
+ * Returns [currency => [field => sum]], sorted by currency code.
+ */
+function billing_sum_by_currency(array $rows, array $fields): array
+{
+    $out = [];
+    foreach ($rows as $r) {
+        $c = strtoupper((string)($r['currency'] ?? ''));
+        if (!isset($out[$c])) {
+            $out[$c] = array_fill_keys($fields, 0.0);
+        }
+        foreach ($fields as $f) {
+            $out[$c][$f] = round($out[$c][$f] + (float)($r[$f] ?? 0), 2);
+        }
+    }
+    ksort($out);
+    return $out;
+}
+
+/**
+ * Pure. Splits per-currency totals into the main one (the $home currency when present, else the first) and the others.
+ * Returns [currency, main totals (or zeros), others]. $zero: the field names for an empty main.
+ */
+function billing_pick_currency(array $byCurrency, string $home, array $zero): array
+{
+    $currency = isset($byCurrency[$home]) || !$byCurrency ? $home : (string)array_key_first($byCurrency);
+    $main = $byCurrency[$currency] ?? array_fill_keys($zero, 0.0);
+    unset($byCurrency[$currency]);
+    return [$currency, $main, $byCurrency];
+}
+
 // Pure. "170134" -> "170135", "Q-1001" -> "Q-1002", "INV-0099" -> "INV-0100", "Q-9999" -> "Q-10000", "ABC" -> "ABC1".
 function billing_number_increment(string $n): string
 {
@@ -424,6 +608,65 @@ function billing_editable(array $doc): string
 }
 
 /**
+ * Pure. Validates invoice lines (documents and recurring schedules). Blank lines are dropped. Each line keeps
+ * qty, item, description, unit_price, cost_price (amount or null = unknown) and catalog_item_id (int or null).
+ * Returns [errors, items].
+ */
+function billing_lines_validate(array $lines): array
+{
+    $err = [];
+    $items = [];
+    $n = 0;
+    foreach ($lines as $l) {
+        $n++;
+        if (!is_array($l)) {
+            continue;
+        }
+        $g = static function ($k, int $max) use ($l): string {
+            $v = isset($l[$k]) && (is_string($l[$k]) || is_numeric($l[$k])) ? trim((string)$l[$k]) : '';
+            return mb_substr(str_replace("\r\n", "\n", $v), 0, $max);
+        };
+        $item = $g('item', 190);
+        $desc = $g('description', 2000);
+        $qty = $g('qty', 12);
+        $price = $g('unit_price', 20);
+        $cost = $g('cost_price', 20);
+        $catId = $g('catalog_item_id', 10);
+        if ($item === '' && $desc === '' && ($price === '' || (float)$price == 0.0)) {
+            continue; // blank line
+        }
+        if ($item === '') {
+            $err[] = 'Line ' . $n . ': the item name is required.';
+        }
+        if (!preg_match('/^\d{1,7}(\.\d{1,2})?$/', $qty) || (float)$qty <= 0) {
+            $err[] = 'Line ' . $n . ': quantity must be a number above 0, for example 1 or 2.5.';
+            $qty = '1';
+        }
+        if ($price === '') {
+            $price = '0';
+        }
+        if (!preg_match('/^-?\d{1,11}(\.\d{1,2})?$/', $price)) {
+            $err[] = 'Line ' . $n . ': unit price must be an amount, for example 100000.';
+            $price = '0';
+        }
+        if ($cost !== '' && !preg_match('/^\d{1,11}(\.\d{1,2})?$/', $cost)) {
+            $err[] = 'Line ' . $n . ': cost price must be an amount, for example 75000, or left empty.';
+            $cost = '';
+        }
+        $items[] = ['qty' => (float)$qty, 'item' => $item, 'description' => $desc, 'unit_price' => (float)$price,
+            'cost_price' => $cost === '' ? null : round((float)$cost, 2),
+            'catalog_item_id' => ctype_digit($catId) && (int)$catId > 0 ? (int)$catId : null];
+    }
+    if (!$items) {
+        $err[] = 'Add at least one line.';
+    }
+    if (count($items) > 100) {
+        $err[] = 'At most 100 lines.';
+    }
+    return [$err, $items];
+}
+
+/**
  * Pure. Validates a posted document and its lines. Returns [errors, doc, items]. Blank lines are dropped.
  * $doc keys: kind, tenant_id, customer_name, customer_contact, customer_email, customer_address, issue_date, due_date,
  * currency, salesperson, notes, discount, tax_rate, extend_months.
@@ -496,50 +739,15 @@ function billing_doc_validate(array $in, array $lines): array
         $ext = '0';
     }
     $doc['extend_months'] = (int)$ext;
-    if ($doc['extend_months'] > 0 && $doc['tenant_id'] === null) {
+    $cid = $s('client_id', 10);
+    $doc['client_id'] = ctype_digit($cid) && (int)$cid > 0 ? (int)$cid : null;
+    // With a client chosen, billing_doc_save checks that the client is a hosted business (it knows the client's tenant).
+    if ($doc['extend_months'] > 0 && $doc['tenant_id'] === null && $doc['client_id'] === null) {
         $err[] = 'Extending a licence needs a business: choose the business or set the months to 0.';
     }
 
-    $items = [];
-    $n = 0;
-    foreach ($lines as $l) {
-        $n++;
-        if (!is_array($l)) {
-            continue;
-        }
-        $g = static function ($k, int $max) use ($l): string {
-            $v = isset($l[$k]) && (is_string($l[$k]) || is_numeric($l[$k])) ? trim((string)$l[$k]) : '';
-            return mb_substr(str_replace("\r\n", "\n", $v), 0, $max);
-        };
-        $item = $g('item', 190);
-        $desc = $g('description', 2000);
-        $qty = $g('qty', 12);
-        $price = $g('unit_price', 20);
-        if ($item === '' && $desc === '' && ($price === '' || (float)$price == 0.0)) {
-            continue; // blank line
-        }
-        if ($item === '') {
-            $err[] = 'Line ' . $n . ': the item name is required.';
-        }
-        if (!preg_match('/^\d{1,7}(\.\d{1,2})?$/', $qty) || (float)$qty <= 0) {
-            $err[] = 'Line ' . $n . ': quantity must be a number above 0, for example 1 or 2.5.';
-            $qty = '1';
-        }
-        if ($price === '') {
-            $price = '0';
-        }
-        if (!preg_match('/^-?\d{1,11}(\.\d{1,2})?$/', $price)) {
-            $err[] = 'Line ' . $n . ': unit price must be an amount, for example 100000.';
-            $price = '0';
-        }
-        $items[] = ['qty' => (float)$qty, 'item' => $item, 'description' => $desc, 'unit_price' => (float)$price];
-    }
-    if (!$items) {
-        $err[] = 'Add at least one line.';
-    }
-    if (count($items) > 100) {
-        $err[] = 'At most 100 lines.';
-    }
+    [$lineErr, $items] = billing_lines_validate($lines);
+    $err = array_merge($err, $lineErr);
     $t = billing_calc_totals($items, $doc['discount'], $doc['tax_rate']);
     if ($t['subtotal'] > 0 && $doc['discount'] - $t['subtotal'] > BILLING_TOLERANCE) {
         $err[] = 'The discount cannot be more than the subtotal.';
@@ -633,7 +841,45 @@ function billing_doc(PDO $pdo, int $id): ?array
     $d = billing_doc_decorate($d);
     $d['items'] = billing_doc_items($pdo, $id);
     $d['tenant'] = $d['tenant_id'] !== null ? tenant_find($pdo, (int)$d['tenant_id']) : null;
+    $d['client'] = billing_doc_client($pdo, $d);
     return $d;
+}
+
+// The client a document belongs to. Older documents without client_id map to their business's client.
+function billing_doc_client(PDO $pdo, array $d): ?array
+{
+    if (!empty($d['client_id'])) {
+        return client_find($pdo, (int)$d['client_id']);
+    }
+    return !empty($d['tenant_id']) ? client_for_tenant($pdo, (int)$d['tenant_id']) : null;
+}
+
+/**
+ * Resolves the client for a document being saved or paid: the chosen client, else the business's client, else a
+ * client made from the printed customer fields (a prospect). Must run inside a transaction. Returns the client row.
+ */
+function billing_resolve_client(PDO $pdo, array $doc, int $adminId): array
+{
+    if (!empty($doc['client_id'])) {
+        $c = client_find($pdo, (int)$doc['client_id']);
+        if (!$c) {
+            throw new InvalidArgumentException('That client no longer exists.');
+        }
+        return $c;
+    }
+    if (!empty($doc['tenant_id'])) {
+        $c = client_for_tenant($pdo, (int)$doc['tenant_id']);
+        if (!$c) {
+            throw new InvalidArgumentException('That business no longer exists.');
+        }
+        return $c;
+    }
+    $cid = client_save($pdo, [
+        'kind' => 'company', 'name' => (string)($doc['customer_name'] ?? ''), 'contact_name' => (string)($doc['customer_contact'] ?? ''),
+        'email' => (string)($doc['customer_email'] ?? ''), 'address' => (string)($doc['customer_address'] ?? ''),
+        'currency' => (string)($doc['currency'] ?? billing_setting('default_currency')), 'source' => 'document', 'is_active' => 1,
+    ], $adminId);
+    return client_find($pdo, $cid);
 }
 
 /**
@@ -650,10 +896,7 @@ function billing_doc_save(PDO $pdo, array $doc, array $items, int $adminId): int
         $pdo->beginTransaction();
     }
     try {
-        if (!empty($doc['tenant_id']) && !tenant_find($pdo, (int)$doc['tenant_id'])) {
-            throw new InvalidArgumentException('That business no longer exists.');
-        }
-        $cols = ['tenant_id', 'customer_name', 'customer_contact', 'customer_email', 'customer_address', 'issue_date', 'due_date',
+        $cols = ['client_id', 'tenant_id', 'customer_name', 'customer_contact', 'customer_email', 'customer_address', 'issue_date', 'due_date',
             'currency', 'salesperson', 'notes', 'discount', 'tax_rate', 'extend_months'];
         $before = null;
         if ($id > 0) {
@@ -674,6 +917,13 @@ function billing_doc_save(PDO $pdo, array $doc, array $items, int $adminId): int
             $doc['kind'] = $before['kind'];
             $before['items'] = billing_doc_items($pdo, $id);
         }
+        // The client owns the document; the business (tenant) follows from the client and is only for the licence.
+        $client = billing_resolve_client($pdo, $doc, $adminId);
+        $doc['client_id'] = (int)$client['id'];
+        $doc['tenant_id'] = $client['tenant_id'] !== null ? (int)$client['tenant_id'] : null;
+        if ((int)($doc['extend_months'] ?? 0) > 0 && $doc['tenant_id'] === null) {
+            throw new InvalidArgumentException('Extending a licence needs a hosted business: ' . $client['name'] . ' has no licence here. Set the months to 0.');
+        }
         $kind = ($doc['kind'] ?? '') === 'quote' ? 'quote' : 'invoice';
         $t = billing_calc_totals($items, (float)($doc['discount'] ?? 0), (float)($doc['tax_rate'] ?? 0));
         $paid = $before ? (float)$before['amount_paid'] : 0.0;
@@ -681,6 +931,7 @@ function billing_doc_save(PDO $pdo, array $doc, array $items, int $adminId): int
             throw new InvalidArgumentException('The total cannot be less than the amount already paid.');
         }
         $vals = [
+            (int)$doc['client_id'],
             !empty($doc['tenant_id']) ? (int)$doc['tenant_id'] : null,
             (string)($doc['customer_name'] ?? ''),
             ($doc['customer_contact'] ?? '') !== '' ? (string)$doc['customer_contact'] : null,
@@ -714,22 +965,105 @@ function billing_doc_save(PDO $pdo, array $doc, array $items, int $adminId): int
                 ->execute(array_merge($vals, $money, [$id]));
             $pdo->prepare('DELETE FROM cp_document_items WHERE document_id = ?')->execute([$id]);
         }
-        $ins = $pdo->prepare('INSERT INTO cp_document_items (document_id, sort, qty, item, description, unit_price, line_total) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        $ins = $pdo->prepare('INSERT INTO cp_document_items (document_id, catalog_item_id, sort, qty, item, description, unit_price, cost_price, line_total)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         foreach ($t['items'] as $i => $it) {
+            $cp = $it['cost_price'] ?? null;
             $ins->execute([
-                $id, $i + 1, number_format($it['qty'], 2, '.', ''), mb_substr((string)$it['item'], 0, 190),
+                $id, !empty($it['catalog_item_id']) ? (int)$it['catalog_item_id'] : null, $i + 1,
+                number_format($it['qty'], 2, '.', ''), mb_substr((string)$it['item'], 0, 190),
                 ($it['description'] ?? '') !== '' ? (string)$it['description'] : null,
-                number_format($it['unit_price'], 2, '.', ''), number_format($it['line_total'], 2, '.', ''),
+                number_format($it['unit_price'], 2, '.', ''), $cp === null || $cp === '' ? null : number_format((float)$cp, 2, '.', ''),
+                number_format($it['line_total'], 2, '.', ''),
             ]);
         }
         $after = billing_doc_row($pdo, $id);
         $after['items'] = billing_doc_items($pdo, $id);
         audit_log($pdo, $adminId, $kind === 'quote' ? 'quote_saved' : 'invoice_saved',
             $after['tenant_id'] !== null ? (int)$after['tenant_id'] : null, $before, $after);
+        if ($before && $after['kind'] === 'invoice' && $after['status'] === 'sent') {
+            billing_settle_zero($pdo, $id, $adminId); // a sent invoice edited down to nothing is paid
+        }
+        if ($own) {
+            $pdo->commit();
+            billing_events_flush($pdo);
+        }
+        return $id;
+    } catch (Throwable $e) {
+        if ($own && $pdo->inTransaction()) {
+            $pdo->rollBack();
+            billing_events_clear();
+        }
+        throw $e;
+    }
+}
+
+/**
+ * Inside a transaction, with the invoice row locked: the invoice has just been paid in full. When it carries
+ * extend_months and a business, that business's paid_until moves on exactly as "Record payment" on the business page
+ * does (from the later of today and the current paid_until). Returns [months, paid_until_before, paid_until_after, tenant row
+ * before, or null]. Without a business the dates are today's (cp_payments needs them) and nothing changes.
+ */
+function billing_apply_paid_in_full(PDO $pdo, array $doc, bool $full): array
+{
+    $tenant = !empty($doc['tenant_id']) ? tenant_find($pdo, (int)$doc['tenant_id'], true) : null;
+    $months = 0;
+    $before = $tenant ? (string)$tenant['paid_until'] : status_today();
+    $after = $before;
+    if ($full && $tenant && (int)$doc['extend_months'] > 0) {
+        $months = (int)$doc['extend_months'];
+        $after = status_add_months(max(status_today(), $before), $months);
+        $pdo->prepare('UPDATE cp_tenants SET paid_until = ? WHERE id = ?')->execute([$after, (int)$tenant['id']]);
+        if (function_exists('trial_is_on') && trial_is_on($tenant)) {
+            // a paid licence invoice ends a free trial: no more trial emails or wording, and the normal step-down days
+            $pdo->prepare('UPDATE cp_tenants SET trial_converted_at = COALESCE(trial_converted_at, ?), grace_days = ?, readonly_days = ? WHERE id = ?')
+                ->execute([date('Y-m-d H:i:s'), trial_setting_int('default_grace_days', 14), trial_setting_int('default_readonly_days', 14), (int)$tenant['id']]);
+        }
+    }
+    return [$months, $before, $after, $tenant];
+}
+
+/**
+ * Pure. A sent invoice whose total is zero (and nothing paid) can never receive a payment, so it counts as paid in full.
+ */
+function billing_is_zero_settle(array $doc): bool
+{
+    return ($doc['kind'] ?? '') === 'invoice' && ($doc['status'] ?? '') === 'sent'
+        && abs((float)($doc['total'] ?? 0)) <= BILLING_TOLERANCE && (float)($doc['amount_paid'] ?? 0) <= BILLING_TOLERANCE;
+}
+
+/**
+ * A sent invoice with a zero total becomes paid; its licence extension (if any) is applied once (the status moves from
+ * sent to paid only once). Audited. Returns true when it settled the invoice. Call after an invoice becomes sent.
+ */
+function billing_settle_zero(PDO $pdo, int $docId, int $adminId): bool
+{
+    $own = !$pdo->inTransaction();
+    if ($own) {
+        $pdo->beginTransaction();
+    }
+    try {
+        $doc = billing_doc_row($pdo, $docId, true);
+        if (!$doc || !billing_is_zero_settle($doc)) {
+            if ($own) {
+                $pdo->rollBack();
+            }
+            return false;
+        }
+        [$months, $pBefore, $pAfter, $tenant] = billing_apply_paid_in_full($pdo, $doc, true);
+        $pdo->prepare('UPDATE cp_documents SET status = \'paid\' WHERE id = ?')->execute([$docId]);
+        $docAfter = billing_doc_row($pdo, $docId);
+        $docAfter['_zero_total'] = ['months' => $months, 'paid_until_before' => $pBefore, 'paid_until_after' => $pAfter];
+        audit_log($pdo, $adminId ?: null, 'invoice_paid_zero_total', $doc['tenant_id'] !== null ? (int)$doc['tenant_id'] : null, $doc, $docAfter);
+        if ($months > 0 && $tenant) {
+            $tAfter = tenant_find($pdo, (int)$tenant['id']);
+            $tAfter['_zero_total_invoice'] = $doc['number'];
+            audit_log($pdo, $adminId ?: null, 'licence_extended', (int)$tenant['id'], $tenant, $tAfter);
+        }
         if ($own) {
             $pdo->commit();
         }
-        return $id;
+        return true;
     } catch (Throwable $e) {
         if ($own && $pdo->inTransaction()) {
             $pdo->rollBack();
@@ -742,7 +1076,8 @@ function billing_doc_save(PDO $pdo, array $doc, array $items, int $adminId): int
  * Records money received against an invoice. When it brings the balance to zero the invoice becomes paid and, if it
  * carries extend_months and a business, that business's paid_until moves on exactly as "Record payment" does on the
  * business page (from the later of today and the current paid_until). One transaction, audited.
- * A business is required: every payment row belongs to a business.
+ * Any client may pay (a company or an individual, hosted or not); tenant_id is set only for a hosted business.
+ * After its own commit it fires automation_event('payment_recorded') (see billing_events_flush).
  */
 function billing_record_payment(PDO $pdo, int $docId, float $amount, string $reference, string $method, int $adminId): array
 {
@@ -773,12 +1108,6 @@ function billing_record_payment(PDO $pdo, int $docId, float $amount, string $ref
             $fail = 'That invoice no longer exists.';
         } elseif (!in_array($doc['status'], ['draft', 'sent'], true)) {
             $fail = 'This invoice is ' . $doc['status'] . '; no payment can be recorded against it.';
-        } elseif ($doc['tenant_id'] === null) {
-            $fail = 'Link this invoice to a business before recording a payment (choose the business on the invoice and save).';
-        }
-        $tenant = $fail === '' ? tenant_find($pdo, (int)$doc['tenant_id'], true) : null;
-        if ($fail === '' && !$tenant) {
-            $fail = 'The business on this invoice no longer exists.';
         }
         $balance = $doc ? billing_balance($doc) : 0.0;
         if ($fail === '' && $amount - $balance > BILLING_TOLERANCE) {
@@ -791,44 +1120,47 @@ function billing_record_payment(PDO $pdo, int $docId, float $amount, string $ref
             $res['error'] = $fail;
             return $res;
         }
+        // Any client may pay; older invoices without a client get theirs now (the business's, or one from the customer fields).
+        $client = billing_resolve_client($pdo, $doc, $adminId);
+        if ((int)($doc['client_id'] ?? 0) !== (int)$client['id']) {
+            $pdo->prepare('UPDATE cp_documents SET client_id = ? WHERE id = ?')->execute([(int)$client['id'], $docId]);
+            $doc['client_id'] = (int)$client['id'];
+        }
         $newPaid = round((float)$doc['amount_paid'] + $amount, 2);
         $left = round((float)$doc['total'] - $newPaid, 2);
         $full = $left <= BILLING_TOLERANCE;
         $status = $full ? 'paid' : 'sent';
-        $months = 0;
-        $pBefore = (string)$tenant['paid_until'];
-        $pAfter = $pBefore;
-        if ($full && (int)$doc['extend_months'] > 0) {
-            $months = (int)$doc['extend_months'];
-            $pAfter = status_add_months(max(status_today(), $pBefore), $months);
-            $pdo->prepare('UPDATE cp_tenants SET paid_until = ? WHERE id = ?')->execute([$pAfter, (int)$tenant['id']]);
-        }
+        [$months, $pBefore, $pAfter, $tenant] = billing_apply_paid_in_full($pdo, $doc, $full);
+        $tenantId = $tenant ? (int)$tenant['id'] : null;
         // Times from the PHP clock (the database clock differs on the host). A draft that takes money counts as sent.
         $now = date('Y-m-d H:i:s');
         $pdo->prepare('UPDATE cp_documents SET amount_paid = ?, status = ?, sent_at = COALESCE(sent_at, ?) WHERE id = ?')
             ->execute([number_format($newPaid, 2, '.', ''), $status, $now, $docId]);
         $pdo->prepare(
-            'INSERT INTO cp_payments (tenant_id, document_id, admin_id, amount, currency, months, reference, method, paid_until_before, paid_until_after, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        )->execute([(int)$tenant['id'], $docId, $adminId ?: null, number_format($amount, 2, '.', ''), $doc['currency'], $months,
+            'INSERT INTO cp_payments (tenant_id, client_id, document_id, admin_id, amount, currency, months, reference, method, paid_until_before, paid_until_after, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([$tenantId, (int)$client['id'], $docId, $adminId ?: null, number_format($amount, 2, '.', ''), $doc['currency'], $months,
             $reference, $method, $pBefore, $pAfter, $now]);
         $pid = (int)$pdo->lastInsertId();
         $docAfter = billing_doc_row($pdo, $docId);
-        $docAfter['_payment'] = ['id' => $pid, 'amount' => number_format($amount, 2, '.', ''), 'currency' => $doc['currency'],
+        $docAfter['_payment'] = ['id' => $pid, 'client_id' => (int)$client['id'], 'amount' => number_format($amount, 2, '.', ''), 'currency' => $doc['currency'],
             'method' => $method, 'reference' => $reference, 'months' => $months, 'paid_until_before' => $pBefore, 'paid_until_after' => $pAfter];
-        audit_log($pdo, $adminId, 'invoice_payment', (int)$tenant['id'], $doc, $docAfter);
-        if ($months > 0) {
+        audit_log($pdo, $adminId, 'invoice_payment', $tenantId, $doc, $docAfter);
+        if ($months > 0 && $tenant) {
             $tAfter = tenant_find($pdo, (int)$tenant['id']);
             $tAfter['_payment'] = $docAfter['_payment'] + ['invoice' => $doc['number']];
             audit_log($pdo, $adminId, 'payment_recorded', (int)$tenant['id'], $tenant, $tAfter);
         }
+        billing_event('payment_recorded', ['payment_id' => $pid, 'document_id' => $docId, 'paid_in_full' => $full]);
         if ($own) {
             $pdo->commit();
+            billing_events_flush($pdo);
         }
         return ['ok' => true, 'error' => '', 'payment_id' => $pid, 'paid_in_full' => $full];
     } catch (Throwable $e) {
         if ($own && $pdo->inTransaction()) {
             $pdo->rollBack();
+            billing_events_clear();
         }
         throw $e;
     }
@@ -920,13 +1252,21 @@ function billing_set_status(PDO $pdo, int $docId, string $status, int $adminId):
             ->execute([$status, $status === 'sent' ? date('Y-m-d H:i:s') : null, $docId]);
         audit_log($pdo, $adminId, $doc['kind'] . '_marked_' . $status, $doc['tenant_id'] !== null ? (int)$doc['tenant_id'] : null,
             $doc, billing_doc_row($pdo, $docId));
+        if ($doc['kind'] === 'invoice' && $status === 'sent') {
+            billing_settle_zero($pdo, $docId, $adminId); // nothing to pay: paid in full now
+        }
+        if ($doc['kind'] === 'quote' && $status === 'accepted') {
+            billing_event('quote_accepted', ['document_id' => $docId]);
+        }
         if ($own) {
             $pdo->commit();
+            billing_events_flush($pdo);
         }
         return '';
     } catch (Throwable $e) {
         if ($own && $pdo->inTransaction()) {
             $pdo->rollBack();
+            billing_events_clear();
         }
         throw $e;
     }
@@ -953,7 +1293,7 @@ function billing_quote_to_invoice(PDO $pdo, int $quoteId, int $adminId): int
         $today = status_today();
         $dueDays = (int)billing_setting('invoice_due_days');
         $doc = [
-            'id' => 0, 'kind' => 'invoice', 'tenant_id' => $q['tenant_id'], 'customer_name' => $q['customer_name'],
+            'id' => 0, 'kind' => 'invoice', 'client_id' => $q['client_id'], 'tenant_id' => $q['tenant_id'], 'customer_name' => $q['customer_name'],
             'customer_contact' => (string)$q['customer_contact'], 'customer_email' => (string)$q['customer_email'],
             'customer_address' => (string)$q['customer_address'], 'issue_date' => $today,
             'due_date' => status_add_days($today, $dueDays), 'currency' => $q['currency'],
@@ -963,7 +1303,9 @@ function billing_quote_to_invoice(PDO $pdo, int $quoteId, int $adminId): int
         ];
         $items = [];
         foreach (billing_doc_items($pdo, $quoteId) as $it) {
-            $items[] = ['qty' => (float)$it['qty'], 'item' => $it['item'], 'description' => (string)$it['description'], 'unit_price' => (float)$it['unit_price']];
+            $items[] = ['qty' => (float)$it['qty'], 'item' => $it['item'], 'description' => (string)$it['description'], 'unit_price' => (float)$it['unit_price'],
+                'cost_price' => $it['cost_price'] !== null ? (float)$it['cost_price'] : null,
+                'catalog_item_id' => $it['catalog_item_id'] !== null ? (int)$it['catalog_item_id'] : null];
         }
         $newId = billing_doc_save($pdo, $doc, $items, $adminId);
         $pdo->prepare('UPDATE cp_documents SET status = \'converted\' WHERE id = ?')->execute([$quoteId]);
@@ -971,138 +1313,110 @@ function billing_quote_to_invoice(PDO $pdo, int $quoteId, int $adminId): int
             billing_doc_row($pdo, $quoteId) + ['_invoice_id' => $newId]);
         if ($own) {
             $pdo->commit();
+            billing_events_flush($pdo);
         }
         return $newId;
     } catch (Throwable $e) {
         if ($own && $pdo->inTransaction()) {
             $pdo->rollBack();
+            billing_events_clear();
         }
         throw $e;
     }
 }
 
 // Sent invoices of a business with something still to pay (draft, paid and void never count), oldest due first.
+// Kept for callers keyed by business; the business's client owns the documents (client_open_invoices).
 function billing_open_invoices(PDO $pdo, int $tenantId, ?string $today = null): array
 {
-    $st = $pdo->prepare(
-        "SELECT * FROM cp_documents WHERE tenant_id = ? AND kind = 'invoice' AND status = 'sent' AND total - amount_paid > ?
-         ORDER BY due_date IS NULL, due_date, id"
-    );
-    $st->execute([$tenantId, BILLING_TOLERANCE]);
-    $out = [];
-    foreach ($st->fetchAll() as $d) {
-        $out[] = billing_doc_decorate($d, $today);
-    }
-    return $out;
+    $c = client_for_tenant($pdo, $tenantId);
+    return $c ? client_open_invoices($pdo, $c, $today) : [];
 }
 
+// What a business owes: the summary of its client (contract shape kept: owed, overdue, currency, other, open, last_payment).
 function billing_tenant_summary(PDO $pdo, int $tenantId): array
 {
-    $tenant = tenant_find($pdo, $tenantId);
-    $open = billing_open_invoices($pdo, $tenantId);
-    // never add different currencies together: one total per currency; the business's own currency is the main one
-    $by = [];
-    foreach ($open as $d) {
-        $c = (string)$d['currency'];
-        $by[$c] = $by[$c] ?? ['owed' => 0.0, 'overdue' => 0.0];
-        $by[$c]['owed'] = round($by[$c]['owed'] + $d['balance'], 2);
-        if ($d['is_overdue']) {
-            $by[$c]['overdue'] = round($by[$c]['overdue'] + $d['balance'], 2);
-        }
+    $c = client_for_tenant($pdo, $tenantId);
+    if (!$c) {
+        return ['owed' => 0.0, 'overdue' => 0.0, 'currency' => billing_setting('default_currency'), 'other' => [], 'open' => [], 'last_payment' => null];
     }
-    $home = $tenant ? (string)$tenant['currency'] : billing_setting('default_currency');
-    $currency = isset($by[$home]) || !$by ? $home : (string)array_key_first($by);
-    $main = $by[$currency] ?? ['owed' => 0.0, 'overdue' => 0.0];
-    unset($by[$currency]);
-    $st = $pdo->prepare('SELECT * FROM cp_payments WHERE tenant_id = ? ORDER BY id DESC LIMIT 1');
-    $st->execute([$tenantId]);
-    $last = $st->fetch();
-    return ['owed' => $main['owed'], 'overdue' => $main['overdue'], 'currency' => $currency, 'other' => $by, 'open' => $open, 'last_payment' => $last ?: null];
+    return client_summary($pdo, (int)$c['id']);
 }
 
-// Every business that owes something, most overdue first.
+/**
+ * Every client that owes something on sent invoices, one row per client and currency (currencies are never added
+ * together), most overdue first. 'id' and 'client_id' = the client; 'tenant_id' = its hosted business or null;
+ * 'billing_email' = the client's email. Older documents without a client count for their business's client.
+ */
 function billing_owed_all(PDO $pdo): array
 {
     $today = status_today();
     $st = $pdo->prepare(
-        "SELECT t.id, t.name, t.billing_email, d.currency,
+        "SELECT c.id, c.name, c.email, c.tenant_id, d.currency,
                 SUM(d.total - d.amount_paid) AS owed,
                 SUM(CASE WHEN d.due_date IS NOT NULL AND d.due_date < ? THEN d.total - d.amount_paid ELSE 0 END) AS overdue,
                 MIN(d.due_date) AS oldest_due
-         FROM cp_documents d JOIN cp_tenants t ON t.id = d.tenant_id
+         FROM cp_documents d
+         JOIN cp_clients c ON c.id = d.client_id OR (d.client_id IS NULL AND d.tenant_id IS NOT NULL AND c.tenant_id = d.tenant_id)
          WHERE d.kind = 'invoice' AND d.status = 'sent' AND d.total - d.amount_paid > ?
-         GROUP BY t.id, t.name, t.billing_email, d.currency
-         ORDER BY overdue DESC, oldest_due, t.name"
+         GROUP BY c.id, c.name, c.email, c.tenant_id, d.currency
+         ORDER BY overdue DESC, oldest_due, c.name"
     );
     $st->execute([$today, BILLING_TOLERANCE]);
     $out = [];
     foreach ($st->fetchAll() as $r) {
         $out[] = [
-            'id' => (int)$r['id'], 'name' => (string)$r['name'], 'currency' => (string)$r['currency'],
+            'id' => (int)$r['id'], 'client_id' => (int)$r['id'], 'tenant_id' => $r['tenant_id'] !== null ? (int)$r['tenant_id'] : null,
+            'name' => (string)$r['name'], 'currency' => (string)$r['currency'],
             'owed' => round((float)$r['owed'], 2), 'overdue' => round((float)$r['overdue'], 2),
-            'oldest_due' => $r['oldest_due'], 'billing_email' => (string)($r['billing_email'] ?? ''),
+            'oldest_due' => $r['oldest_due'], 'billing_email' => (string)($r['email'] ?? ''),
         ];
     }
     return $out;
 }
 
 /**
- * Account statement for a business: invoices (sent or paid; drafts and void never count) are debits on their date,
- * payments recorded against those invoices are credits on the day they were entered. Licence payments recorded on the
- * business page without an invoice are not part of the statement. $from / $to default to the first activity and today.
+ * Pure. Builds statement lines from invoices (each with id, number, issue_date, total, and 'description') and payments
+ * (id, document_id, created_at, reference, amount, method) of ONE currency. Invoices dated after $to are not on the
+ * statement and neither are the payments against them, so debits and credits always match (a payment is only ever a
+ * credit for an invoice that is a debit on the same statement). $from null = the first activity.
+ * Returns ['from','to','opening','closing','lines'].
  */
-function billing_statement(PDO $pdo, int $tenantId, ?string $from = null, ?string $to = null, ?string $currency = null): array
+function billing_statement_build(array $invoices, array $payments, ?string $from, string $to): array
 {
-    $tenant = tenant_find($pdo, $tenantId);
-    $to = ($to !== null && tenant_valid_date($to)) ? $to : status_today();
-    $st = $pdo->prepare(
-        "SELECT * FROM cp_documents WHERE tenant_id = ? AND kind = 'invoice' AND status IN ('sent','paid') ORDER BY issue_date, id"
-    );
-    $st->execute([$tenantId]);
-    $all = $st->fetchAll();
-    // one statement = one currency (amounts in different currencies are never added together)
-    $currencies = array_values(array_unique(array_map(static fn($d) => (string)$d['currency'], $all)));
-    $home = $tenant ? (string)$tenant['currency'] : billing_setting('default_currency');
-    if ($currency === null || !in_array($currency, $currencies, true)) {
-        $currency = in_array($home, $currencies, true) || !$currencies ? $home : $currencies[0];
-    }
-    $invoices = array_values(array_filter($all, static fn($d) => (string)$d['currency'] === $currency));
     $byId = [];
-    foreach ($invoices as $d) {
-        $byId[(int)$d['id']] = $d;
-    }
-    $ps = $pdo->prepare('SELECT * FROM cp_payments WHERE tenant_id = ? AND document_id IS NOT NULL ORDER BY created_at, id');
-    $ps->execute([$tenantId]);
     $events = [];
     foreach ($invoices as $d) {
-        $first = billing_doc_items($pdo, (int)$d['id']);
-        $desc = 'Invoice ' . $d['number'] . ($first ? ': ' . $first[0]['item'] . (count($first) > 1 ? ' and ' . (count($first) - 1) . ' more' : '') : '');
+        if ((string)$d['issue_date'] > $to) {
+            continue;
+        }
+        $byId[(int)$d['id']] = $d;
         $events[] = ['date' => (string)$d['issue_date'], 'order' => 0, 'id' => (int)$d['id'], 'type' => 'invoice', 'ref' => (string)$d['number'],
-            'description' => $desc, 'debit' => round((float)$d['total'], 2), 'credit' => 0.0];
+            'description' => (string)($d['description'] ?? ('Invoice ' . $d['number'])), 'debit' => round((float)$d['total'], 2), 'credit' => 0.0];
     }
     $methods = billing_payment_methods();
-    foreach ($ps->fetchAll() as $p) {
-        $inv = $byId[(int)$p['document_id']] ?? null;
+    foreach ($payments as $p) {
+        $inv = $byId[(int)($p['document_id'] ?? 0)] ?? null;
         if (!$inv) {
-            continue; // payment against an invoice that is no longer counted
+            continue; // not against an invoice on this statement
         }
         $events[] = ['date' => substr((string)$p['created_at'], 0, 10), 'order' => 1, 'id' => (int)$p['id'], 'type' => 'payment',
             'ref' => (string)$p['reference'],
-            'description' => 'Payment for invoice ' . $inv['number'] . (isset($methods[(string)$p['method']]) ? ' (' . $methods[(string)$p['method']] . ')' : ''),
+            'description' => 'Payment for invoice ' . $inv['number'] . (isset($methods[(string)($p['method'] ?? '')]) ? ' (' . $methods[(string)$p['method']] . ')' : ''),
             'debit' => 0.0, 'credit' => round((float)$p['amount'], 2)];
     }
     usort($events, static function ($a, $b) {
         return [$a['date'], $a['order'], $a['id']] <=> [$b['date'], $b['order'], $b['id']];
     });
     if ($from === null || !tenant_valid_date($from)) {
-        $from = $events ? $events[0]['date'] : $to;
+        $from = $events ? min($events[0]['date'], $to) : $to;
     }
     $opening = 0.0;
     $bal = 0.0;
     $lines = [];
     foreach ($events as $ev) {
         if ($ev['date'] > $to) {
-            break;
+            continue; // a payment entered after the statement date
         }
         if ($ev['date'] < $from) {
             $opening = round($opening + $ev['debit'] - $ev['credit'], 2);
@@ -1113,9 +1427,24 @@ function billing_statement(PDO $pdo, int $tenantId, ?string $from = null, ?strin
         $lines[] = ['date' => $ev['date'], 'type' => $ev['type'], 'ref' => $ev['ref'], 'description' => $ev['description'],
             'debit' => $ev['debit'], 'credit' => $ev['credit'], 'balance' => $bal];
     }
-    $open = array_values(array_filter(billing_open_invoices($pdo, $tenantId), static fn($d) => (string)$d['currency'] === $currency));
-    return ['tenant' => $tenant, 'from' => $from, 'to' => $to, 'lines' => $lines, 'opening' => $opening, 'closing' => $bal,
-        'currency' => $currency, 'currencies' => $currencies, 'open_invoices' => $open];
+    return ['from' => $from, 'to' => $to, 'opening' => $opening, 'closing' => $bal, 'lines' => $lines];
+}
+
+/**
+ * Account statement for a business = the statement of its client (client_statement), plus 'tenant'. Invoices (sent or
+ * paid; drafts and void never count) are debits on their date, payments against them are credits on the day they were
+ * entered. Licence payments recorded on the business page without an invoice are not part of the statement.
+ */
+function billing_statement(PDO $pdo, int $tenantId, ?string $from = null, ?string $to = null, ?string $currency = null): array
+{
+    $tenant = tenant_find($pdo, $tenantId);
+    $c = $tenant ? client_for_tenant($pdo, $tenantId) : null;
+    if (!$c) {
+        $to = ($to !== null && tenant_valid_date($to)) ? $to : status_today();
+        return ['tenant' => $tenant, 'client' => null, 'from' => $from ?? $to, 'to' => $to, 'lines' => [], 'opening' => 0.0, 'closing' => 0.0,
+            'currency' => billing_setting('default_currency'), 'currencies' => [], 'open_invoices' => []];
+    }
+    return client_statement($pdo, (int)$c['id'], $from, $to, $currency);
 }
 
 /**
@@ -1154,26 +1483,72 @@ function billing_due_reminders(PDO $pdo, string $today): array
 // Saved items
 // ---------------------------------------------------------------------------------------------------------------
 
-function billing_catalog(PDO $pdo, bool $activeOnly = true): array
+function billing_catalog_categories(): array
 {
-    return $pdo->query('SELECT * FROM cp_catalog_items' . ($activeOnly ? ' WHERE is_active = 1' : '') . ' ORDER BY is_active DESC, sort, item')->fetchAll();
+    return ['service' => 'Service', 'hardware' => 'Hardware', 'software' => 'Software', 'licence' => 'Licence', 'hosting' => 'Hosting',
+        'domain' => 'Domain', 'other' => 'Other'];
 }
 
-// First use: fills the saved items with the owner's usual lines. Does nothing once any item exists.
-function billing_seed_catalog(PDO $pdo): void
+function billing_catalog(PDO $pdo, bool $activeOnly = true): array
 {
-    if ((int)$pdo->query('SELECT COUNT(*) FROM cp_catalog_items')->fetchColumn() > 0) {
+    return $pdo->query('SELECT * FROM cp_catalog_items' . ($activeOnly ? ' WHERE is_active = 1' : '') . ' ORDER BY is_active DESC, category, sort, item')->fetchAll();
+}
+
+// Pure. Saved items grouped by category in the categories' order (unknown categories last, under "other").
+function billing_catalog_grouped(array $items): array
+{
+    $cats = billing_catalog_categories();
+    $out = array_fill_keys(array_keys($cats), []);
+    foreach ($items as $it) {
+        $c = (string)($it['category'] ?? 'service');
+        $out[isset($cats[$c]) ? $c : 'other'][] = $it;
+    }
+    return array_filter($out);
+}
+
+/**
+ * First use: fills the saved items with the owner's usual lines, once. A lock on the cp_settings row 'catalog_seeded'
+ * makes two first page loads at the same moment seed only once; the seeding is audited.
+ */
+function billing_seed_catalog(PDO $pdo, int $adminId = 0): void
+{
+    if ((billing_settings_cache()['catalog_seeded'] ?? '') === '1') {
         return;
     }
-    $rows = [
-        ['Web Hosting | Billed Monthly', 'Web Hosting for sites', '100000.00', 1],
-        ['.com Domain Registration (2 Years)', 'Domain Registration (Client renews after 2 Years) for <domain>', '134000.00', 2],
-        ['Service Fee', '1 Time Service Fee', '100000.00', 3],
-        ['PMS licence | Monthly', 'Hotel management system licence', '0.00', 4],
-    ];
-    $st = $pdo->prepare('INSERT INTO cp_catalog_items (item, description, unit_price, currency, is_active, sort) VALUES (?, ?, ?, \'MWK\', 1, ?)');
-    foreach ($rows as $r) {
-        $st->execute($r);
+    $own = !$pdo->inTransaction();
+    if ($own) {
+        $pdo->beginTransaction();
+    }
+    try {
+        $pdo->prepare('INSERT IGNORE INTO cp_settings (setting_key, setting_value) VALUES (\'catalog_seeded\', \'0\')')->execute();
+        $flag = (string)$pdo->query('SELECT setting_value FROM cp_settings WHERE setting_key = \'catalog_seeded\' FOR UPDATE')->fetchColumn();
+        if ($flag !== '1') {
+            $rows = [];
+            if ((int)$pdo->query('SELECT COUNT(*) FROM cp_catalog_items')->fetchColumn() === 0) {
+                $rows = [
+                    ['hosting', 'Web Hosting | Billed Monthly', 'Web Hosting for sites', '100000.00', 'month', 1],
+                    ['domain', '.com Domain Registration (2 Years)', 'Domain Registration (Client renews after 2 Years) for <domain>', '134000.00', null, 2],
+                    ['service', 'Service Fee', '1 Time Service Fee', '100000.00', null, 3],
+                    ['licence', 'PMS licence | Monthly', 'Hotel management system licence', '0.00', 'month', 4],
+                ];
+                $st = $pdo->prepare('INSERT INTO cp_catalog_items (category, item, description, unit_price, unit, currency, is_active, sort) VALUES (?, ?, ?, ?, ?, \'MWK\', 1, ?)');
+                foreach ($rows as $r) {
+                    $st->execute($r);
+                }
+            }
+            $pdo->prepare('UPDATE cp_settings SET setting_value = \'1\' WHERE setting_key = \'catalog_seeded\'')->execute();
+            audit_log($pdo, $adminId ?: null, 'catalog_seeded', null, null, ['items_added' => count($rows)]);
+        }
+        if ($own) {
+            $pdo->commit();
+        }
+    } catch (Throwable $e) {
+        if ($own && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    } finally {
+        billing_settings_cache(null, true);
     }
 }
 
@@ -1186,7 +1561,20 @@ function billing_catalog_validate(array $in): array
         return mb_substr($v, 0, $max);
     };
     $c = ['item' => $g('item', 190), 'description' => $g('description', 2000), 'unit_price' => $g('unit_price', 20),
-        'currency' => strtoupper($g('currency', 3)), 'sort' => $g('sort', 5), 'is_active' => ($in['is_active'] ?? '') === '1' ? 1 : 0];
+        'currency' => strtoupper($g('currency', 3)), 'sort' => $g('sort', 5), 'is_active' => ($in['is_active'] ?? '') === '1' ? 1 : 0,
+        'category' => $g('category', 40), 'sku' => $g('sku', 60), 'unit' => $g('unit', 20), 'cost_price' => $g('cost_price', 20)];
+    // Part 3: a plan is an item billed every N months ('' = a one-off item). Only when the form sends the field.
+    if (array_key_exists('billing_interval', $in)) {
+        $bi = $g('billing_interval', 3);
+        if ($bi === '' || $bi === '0') {
+            $c['billing_interval'] = null;
+        } elseif (ctype_digit($bi) && in_array((int)$bi, [1, 3, 12], true)) {
+            $c['billing_interval'] = (int)$bi;
+        } else {
+            $err[] = 'A plan is billed every 1, 3 or 12 months.';
+            $c['billing_interval'] = null;
+        }
+    }
     if ($c['item'] === '') {
         $err[] = 'The item name is required.';
     }
@@ -1196,8 +1584,21 @@ function billing_catalog_validate(array $in): array
     if (!preg_match('/^\d{1,11}(\.\d{1,2})?$/', $c['unit_price'])) {
         $err[] = 'Unit price must be an amount, for example 100000.';
     }
+    if ($c['cost_price'] !== '' && !preg_match('/^\d{1,11}(\.\d{1,2})?$/', $c['cost_price'])) {
+        $err[] = 'Cost price must be an amount, for example 75000, or left empty when unknown.';
+    }
     if (!preg_match('/^[A-Z]{3}$/', $c['currency'])) {
         $err[] = 'Currency must be a 3-letter code such as MWK.';
+    }
+    if ($c['category'] === '') {
+        $c['category'] = 'service';
+    }
+    if (!isset(billing_catalog_categories()[$c['category']])) {
+        $err[] = 'Choose a category from the list.';
+        $c['category'] = 'other';
+    }
+    if ($c['sku'] !== '' && !preg_match('/^[A-Za-z0-9._\/-]{1,60}$/', $c['sku'])) {
+        $err[] = 'SKU may use letters, digits and . _ / - only.';
     }
     $c['sort'] = ctype_digit($c['sort']) ? min(9999, (int)$c['sort']) : 0;
     return [$err, $c];
@@ -1206,6 +1607,9 @@ function billing_catalog_validate(array $in): array
 // Inserts ($id 0) or updates a saved item. Returns the id.
 function billing_catalog_save(PDO $pdo, int $id, array $c, int $adminId): int
 {
+    $nul = static fn($v) => ($v ?? '') === '' ? null : $v;
+    $vals = [$c['category'] ?? 'service', $nul($c['sku'] ?? ''), $c['item'], $nul($c['description']), $c['unit_price'], $nul($c['unit'] ?? ''),
+        $nul($c['cost_price'] ?? ''), $c['currency'], $c['is_active'], $c['sort']];
     if ($id > 0) {
         $b = $pdo->prepare('SELECT * FROM cp_catalog_items WHERE id = ?');
         $b->execute([$id]);
@@ -1213,12 +1617,15 @@ function billing_catalog_save(PDO $pdo, int $id, array $c, int $adminId): int
         if (!$before) {
             return 0;
         }
-        $pdo->prepare('UPDATE cp_catalog_items SET item = ?, description = ?, unit_price = ?, currency = ?, is_active = ?, sort = ? WHERE id = ?')
-            ->execute([$c['item'], $c['description'] !== '' ? $c['description'] : null, $c['unit_price'], $c['currency'], $c['is_active'], $c['sort'], $id]);
+        $pdo->prepare('UPDATE cp_catalog_items SET category = ?, sku = ?, item = ?, description = ?, unit_price = ?, unit = ?, cost_price = ?, currency = ?, is_active = ?, sort = ? WHERE id = ?')
+            ->execute(array_merge($vals, [$id]));
+        if (array_key_exists('billing_interval', $c)) { // Part 3: only when the form carried it (other callers keep the stored value)
+            $pdo->prepare('UPDATE cp_catalog_items SET billing_interval = ? WHERE id = ?')->execute([$c['billing_interval'] !== null ? (int)$c['billing_interval'] : null, $id]);
+        }
     } else {
         $before = null;
-        $pdo->prepare('INSERT INTO cp_catalog_items (item, description, unit_price, currency, is_active, sort) VALUES (?, ?, ?, ?, ?, ?)')
-            ->execute([$c['item'], $c['description'] !== '' ? $c['description'] : null, $c['unit_price'], $c['currency'], $c['is_active'], $c['sort']]);
+        $pdo->prepare('INSERT INTO cp_catalog_items (category, sku, item, description, unit_price, unit, cost_price, currency, is_active, sort, billing_interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            ->execute(array_merge($vals, [isset($c['billing_interval']) && $c['billing_interval'] !== null ? (int)$c['billing_interval'] : null]));
         $id = (int)$pdo->lastInsertId();
     }
     $a = $pdo->prepare('SELECT * FROM cp_catalog_items WHERE id = ?');
@@ -1227,16 +1634,75 @@ function billing_catalog_save(PDO $pdo, int $id, array $c, int $adminId): int
     return $id;
 }
 
-function billing_email_log(PDO $pdo, ?int $docId, ?int $tenantId = null, int $limit = 50): array
+/**
+ * Email history: of one document ($docId), else of one client ($clientId: its own emails and, for a hosted business,
+ * older ones logged against the business only), else of one business ($tenantId).
+ */
+function billing_email_log(PDO $pdo, ?int $docId, ?int $tenantId = null, int $limit = 50, ?int $clientId = null): array
 {
+    $lim = ' ORDER BY id DESC LIMIT ' . max(1, min(500, $limit));
     if ($docId !== null) {
-        $st = $pdo->prepare('SELECT * FROM cp_email_log WHERE document_id = ? ORDER BY id DESC LIMIT ' . max(1, $limit));
+        $st = $pdo->prepare('SELECT * FROM cp_email_log WHERE document_id = ?' . $lim);
         $st->execute([$docId]);
+    } elseif ($clientId !== null) {
+        $c = client_find($pdo, $clientId);
+        $tid = $c && $c['tenant_id'] !== null ? (int)$c['tenant_id'] : 0;
+        $st = $pdo->prepare('SELECT * FROM cp_email_log WHERE client_id = ? OR (client_id IS NULL AND tenant_id = ?)' . $lim);
+        $st->execute([$clientId, $tid]);
     } else {
-        $st = $pdo->prepare('SELECT * FROM cp_email_log WHERE tenant_id = ? ORDER BY id DESC LIMIT ' . max(1, $limit));
+        $st = $pdo->prepare('SELECT * FROM cp_email_log WHERE tenant_id = ?' . $lim);
         $st->execute([(int)$tenantId]);
     }
     return $st->fetchAll();
+}
+
+/**
+ * The invoice a receipt is printed against. For a payment against an invoice: that invoice (billing_doc). For a licence
+ * payment recorded on the business page (no invoice): a stand-in built from the client, so every payment has a receipt
+ * (no number, total = amount = paid, balance 0). Null if the payment is unknown.
+ */
+function billing_receipt_doc(PDO $pdo, array $payment): ?array
+{
+    if (!empty($payment['document_id'])) {
+        return billing_doc($pdo, (int)$payment['document_id']);
+    }
+    $client = !empty($payment['client_id']) ? client_find($pdo, (int)$payment['client_id'])
+        : (!empty($payment['tenant_id']) ? client_for_tenant($pdo, (int)$payment['tenant_id']) : null);
+    $amt = round((float)$payment['amount'], 2);
+    $months = (int)($payment['months'] ?? 0);
+    return [
+        'id' => 0, 'kind' => 'invoice', 'number' => '', 'status' => 'paid', 'client_id' => $client['id'] ?? null,
+        'tenant_id' => $payment['tenant_id'] ?? null, 'customer_name' => (string)($client['name'] ?? ''),
+        'customer_contact' => (string)($client['contact_name'] ?? ''), 'customer_email' => (string)($client['email'] ?? ''),
+        'customer_address' => (string)($client['address'] ?? ''), 'issue_date' => substr((string)$payment['created_at'], 0, 10),
+        'due_date' => null, 'currency' => (string)$payment['currency'], 'salesperson' => billing_setting('salesperson'),
+        'notes' => $months > 0 ? 'Licence: ' . $months . ' month' . ($months === 1 ? '' : 's') . ', paid until ' . billing_date((string)$payment['paid_until_after']) . '.' : '',
+        'subtotal' => $amt, 'discount' => 0, 'tax_rate' => 0, 'tax' => 0, 'total' => $amt, 'amount_paid' => $amt, 'balance' => 0.0,
+        'is_overdue' => false, 'items' => [], 'tenant' => !empty($payment['tenant_id']) ? tenant_find($pdo, (int)$payment['tenant_id']) : null,
+        'client' => $client,
+    ];
+}
+
+// Receipt PDF file name for a payment: "<invoice no>-<payment id>", or "P<payment id>" for a licence payment.
+function billing_receipt_number(array $payment, array $doc): string
+{
+    return ($doc['number'] ?? '') !== '' ? $doc['number'] . '-' . (int)$payment['id'] : 'P' . (int)$payment['id'];
+}
+
+/**
+ * An open invoice (draft, or sent with a balance) of a business that will extend its licence when paid. Recording a
+ * licence payment on the business page while one exists would extend the licence twice. Null when there is none.
+ */
+function billing_open_extending_invoice(PDO $pdo, int $tenantId): ?array
+{
+    $c = client_for_tenant($pdo, $tenantId);
+    $st = $pdo->prepare(
+        "SELECT * FROM cp_documents WHERE kind = 'invoice' AND extend_months > 0 AND status IN ('draft','sent') AND total - amount_paid > ?
+           AND (tenant_id = ? OR client_id = ?) ORDER BY id LIMIT 1"
+    );
+    $st->execute([BILLING_TOLERANCE, $tenantId, $c ? (int)$c['id'] : 0]);
+    $r = $st->fetch();
+    return $r ?: null;
 }
 
 // Optional parts built by other agents. Loaded only when present so a page still works without them.
@@ -1267,3 +1733,8 @@ function billing_stream_pdf(string $bytes, string $filename): void
     echo $bytes;
     exit;
 }
+
+// Clients and recurring invoices (Part 2). Definitions only; nothing runs at include time.
+require_once __DIR__ . '/clients.php';
+require_once __DIR__ . '/recurring.php';
+require_once __DIR__ . '/trials.php'; // Part 3: free trials and plans

@@ -144,3 +144,125 @@ aligned bold: "Total  MWK602,000.00", "Balance Due  MWK602,000.00" (plus Subtota
 "Amount Paid" when > 0). Then bold "Thank you for your business." and the payment_details block in bold small text. Then a full-
 width red bar, "REMITTANCE" centred bold, and a 2-column list: Invoice No., Customer Name, Date, Amount Enclosed (= balance
 due); a red rule at the bottom. Money format "MWK602,000.00". Dates dd/mm/YYYY.
+
+---
+
+# Part 2 — Sales & Billing department (owner 2026-11-09)
+
+"Completely be able to do all the billing from here", for ANY client (a company or an individual, hosting with us or
+not — we also sell hardware etc.), track it with Excel exports, and send automated emails (thank you for payment, thank
+you for your business, ...). Run as autonomously as possible, the way the ProManaged Proposals app runs its departments:
+automations do the work, and anything that goes to a customer either goes automatically or waits in an **Outbox** for one
+click, per the owner's setting. Same stack rules as Part 1. Migration 005 is applied; no other schema change.
+
+## Tables added (migration 005_sales.sql)
+- `cp_clients(id, kind company|individual, name, contact_name, email, cc_emails, phone, address, tax_number, currency,
+  tenant_id NULL UNIQUE (the hosted business it is), source, notes, is_active)`. Every hosted business already has its
+  client row (tenant_id set). **The client is now who a document/payment belongs to**; tenant_id stays only to extend a
+  licence. Keep the tenant's billing contact and its client row in step when either is edited.
+- `cp_documents.client_id`; `cp_payments.client_id` (and `tenant_id` now NULL-able); `cp_email_log.client_id`.
+- `cp_catalog_items` + `category` (service | hardware | software | licence | hosting | domain | other), `sku`, `unit`, `cost_price`.
+- `cp_document_items` + `catalog_item_id`, `cost_price` (copied from the catalog item when picked; gives profit).
+- `cp_recurring(client_id, tenant_id, title, interval_months, next_date, end_date, currency, due_days, extend_months,
+  items_json [{qty,item,description,unit_price,cost_price,catalog_item_id}], notes, send_mode auto|approve|draft, is_active,
+  last_document_id, last_run_at)`.
+- `cp_outbox(kind, ref_id, client_id, document_id, reason, opts_json, status pending|sent|failed|skipped, dedupe_key UNIQUE,
+  error, decided_by, created_at, decided_at)` — automated emails waiting for approval (or a record of auto-sent ones).
+
+## Agents and ownership (do not edit another agent's files)
+**Agent CLIENTS** — app/clients.php, app/recurring.php, public/clients.php, public/client.php, public/recurring.php, and
+changes to app/billing.php, public/document.php, public/invoices.php, public/statement.php, public/settings.php,
+public/tenant.php, app/view.php (nav: Billing, Clients, Reports, Outbox, Settings), public/assets/billing.js, app.css.
+```
+client_find(PDO, int $id): ?array
+client_for_tenant(PDO, int $tenantId): ?array               // creates the linked client if missing
+client_save(PDO, array $c, int $adminId): int               // validates; fires automation_event('client_created') for new ones
+client_summary(PDO, int $clientId): array                   // per currency: owed, overdue, currency (main), other[], open[], last_payment
+client_statement(PDO, int $clientId, ?string $from, ?string $to, ?string $currency): array  // same shape as billing_statement + 'client'
+recurring_save(PDO, array $r, int $adminId): int
+recurring_due(PDO, string $today): array                    // active schedules with next_date <= today and end_date not passed
+recurring_run_one(PDO, int $id, int $adminId, string $today): array   // creates the invoice (status draft), advances next_date by
+     // interval_months calendar-safely (31 Jan + 1 month = 28/29 Feb), returns ['ok','document_id','send_mode','error']
+```
+billing_doc_save takes `client_id` (required for new documents; a prospect = a client created on the fly from the customer
+fields); `tenant_id` is set from the client's tenant_id. billing_doc adds `client` (row). billing_record_payment works for
+any client (tenant_id only for a hosted business) and, after commit, calls `automation_event($pdo, 'payment_recorded',
+['payment_id'=>..,'document_id'=>..,'paid_in_full'=>bool])`; billing_set_status to `accepted` calls
+`automation_event($pdo, 'quote_accepted', ['document_id'=>..])`. Guard every call with `function_exists('automation_event')`.
+Statement / payment request are per CLIENT (`statement.php?client=`; `?tenant=` maps to its client); billing_send kinds
+'statement' and 'payment_request' take a CLIENT id (AUTOMATION adapts billing_mail.php). Catalog in settings.php gets
+category, SKU, unit, cost price. Document editor: client picker (+ "New client" inline: company or individual), item picker
+grouped by category, profit shown to the owner. Billing board at the top of invoices.php: due today, overdue, outbox
+waiting (link), recurring due in 7 days.
+
+**Agent REPORTS** — app/xlsx.php (pure-PHP XLSX writer with its own ZIP writer: CRC32 + gzdeflate; ZipArchive is NOT
+installed), app/reports.php, public/reports.php. Period picker (this month, last month, this year, custom); cards
+(invoiced, collected, outstanding, overdue, profit where cost known); aged debt (current, 1-30, 31-60, 61-90, 90+) per client
+and currency; sales by month, by client, by product/category; payments list. Every table has "Export to Excel" (.xlsx);
+"Export everything" = one workbook (Invoices, Invoice lines, Payments, Quotations, Clients, Aged debt, Sales by month, Sales
+by product). Never add different currencies together. Read-only queries only.
+```
+xlsx_build(array $sheets): string   // [['name'=>'Invoices','columns'=>[['title'=>'Date','type'=>'string|number|money|date','width'=>12]],'rows'=>[[...]]]]
+xlsx_stream(string $bytes, string $filename): void
+```
+
+**Agent AUTOMATION** — app/automation.php, public/outbox.php, public/automations.php, scripts/billing-daily.php, and
+changes to app/email_templates.php, app/billing_mail.php (new kinds + client-based recipients), scripts/billing-reminders.php
+(thin wrapper calling the daily run's reminder step).
+New email kinds: `thank_you_payment` (receipt PDF), `thank_you_business` (invoice paid in full; PDF shows PAID), `welcome`
+(new client), `quote_accepted` (confirmation + quote PDF), `recurring_invoice` (invoice wording + "your regular invoice for
+<title>"). Recipients come from the client (email + cc); billing_send must work for any client.
+```
+automation_modes(): array          // kind => off|approve|auto. Keys auto_thank_payment, auto_thank_business, auto_welcome,
+                                   // auto_quote_accepted, auto_reminders; recurring uses each schedule's send_mode
+automation_event(PDO, string $event, array $data): void  // payment_recorded → thank_you_payment (+ thank_you_business if paid in
+                                   // full); quote_accepted; client_created → welcome. auto → send now (never throws; errors logged);
+                                   // approve → cp_outbox (dedupe_key "thank_you_payment:<payment_id>" etc.); off → nothing
+outbox_add(PDO, string $kind, int $refId, array $opts, string $reason, string $dedupe): int
+outbox_decide(PDO, int $id, string $action /* send|skip */, int $adminId, string $message = ''): array
+billing_daily(PDO, string $today, bool $dryRun = false): array  // 1. recurring → invoice → send/outbox/draft per send_mode
+                                   // 2. due reminders per auto_reminders  3. summary; idempotent (lock file storage/billing-daily.lock + dedupe)
+```
+Defaults: auto_thank_payment=auto, auto_thank_business=auto, auto_welcome=approve, auto_quote_accepted=auto,
+auto_reminders=approve. automations.php: one row per automation (mode, what it sends, when, last 10 sent). outbox.php:
+pending items with preview (subject, first lines, attachments), Send / Skip / note; history tab. Cron:
+`scripts/billing-daily.php` once a day (replaces billing-reminders.php in the guide).
+
+---
+
+# Part 3 — Free trials and subscription plans (owner 2026-11-09)
+
+"Make a business like the hotels on a free demo trial that locks after the trial ends, depending on its length. And
+billing monthly, e.g. for support or a service." Migration 006 is applied: `cp_tenants.trial_until`, `trial_started`,
+`trial_converted_at`; `cp_catalog_items.billing_interval` (months; NULL = one-off item).
+
+## Trials (licence)
+- Start a trial when adding a business (or on an existing one that has never paid): length in days (presets 7 / 14 / 30,
+  custom 1-90). Sets trial_started = today, trial_until = today + days, paid_until = trial_until, and the after-trial
+  step-down from settings `trial_grace_days` (default 0) and `trial_readonly_days` (default 3: they can still view and export,
+  then the staff area locks; data is never deleted). Status words everywhere: "Free trial – N days left" / "Trial ended".
+- Extend a trial (+N days, audited), end it now, or convert to paid: convert = choose a plan (catalog item with
+  billing_interval) or the business's monthly fee → creates a recurring schedule (Part 2) starting today, the first invoice
+  (draft or sent per the owner's choice), restores the business's normal grace/read-only days from settings
+  `default_grace_days` / `default_readonly_days` (14 / 14), sets trial_converted_at; paid_until moves only when the first invoice
+  is paid (extend_months on it). A trial with an unpaid first invoice keeps the trial's end date.
+- The signed licence answer adds `trial` (bool, true while trial_until is set and not converted) and `trial_until`
+  (Y-m-d|null). Old sites ignore them.
+- Automations (Part 2 engine, modes off/approve/auto, dedupe per tenant+day): `trial_started` (welcome to the trial: what is
+  included, how long, who to call), `trial_ending` at settings `trial_reminder_days` (default "7,3,1" days before end, with a
+  quotation/offer to continue), `trial_ended` (the day after: what happens now, how to continue, payment details), `trial_converted`
+  (thank you for choosing us). Defaults: trial_started auto, trial_ending auto, trial_ended auto, trial_converted auto.
+- Billing board + client page show trials ending in the next 7 days; Reports gets "Trials: started / converted / lost" and
+  conversion rate for the period.
+
+## Plans (subscriptions for any client: PMS licence, IT support, hosting, maintenance, ...)
+- A plan = a catalog item with billing_interval (1 = monthly, 3 = quarterly, 12 = yearly). Settings › Saved items can mark an
+  item as a plan. "Subscribe" on a client page: pick a plan (+ optional extra lines, start date, send mode) → recurring schedule.
+  Yearly billing of a monthly plan: optional discount % (setting `annual_discount_pct`, default 0) shown as a discount line.
+- Seed (only if no plan exists, prices 0 for the owner to set): "PMS licence – Monthly", "IT Support – Monthly",
+  "Website hosting – Monthly", "Website maintenance – Monthly", "PMS licence – Yearly" (12).
+
+## Hotel side (PMS, both hotels, Rosalyn's is the source; tests at Liwonde only)
+includes/licence.php: keep `trial` / `trial_until` from a verified payload; staff banner "Free trial: N days left — contact
+<LICENCE_CONTACT> to continue" during the last 7 days of a trial, and the existing grace/read-only/suspended wording after it
+(say "Your free trial has ended" instead of "payment overdue" when trial was true). Ship with scripts/ship.php from Rosalyn's.

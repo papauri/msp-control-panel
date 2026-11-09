@@ -33,6 +33,39 @@ t_eq('a file without the header is refused', null, backup_decrypt('XXXXX' . subs
 t_eq('a short file is refused', null, backup_decrypt(BACKUP_MAGIC . 'abc', $kBackup));
 t_eq('no backup name outside the pattern opens (no path tricks)', null, backup_panel_open('../.env'));
 
+// ── Streamed (chunked) compression: same file format as before, so older backups and new ones open the same way ──
+$chunks = [];
+for ($i = 0; $i < 2000; $i++) {
+    $chunks[] = "INSERT INTO `cp_x` (`id`, `v`) VALUES ($i, '" . bin2hex(random_bytes(8)) . "');\n";
+}
+$chunks[] = '';
+$streamed = backup_seal_stream(static function (callable $emit) use ($chunks): void {
+    foreach ($chunks as $c) {
+        $emit($c);
+    }
+}, $kBackup);
+t_ok('streamed backup starts with the same format header', is_string($streamed) && strpos($streamed, BACKUP_MAGIC) === 0);
+t_eq('streamed backup opens with the same decrypt + gunzip as before', implode('', $chunks), gzdecode((string)backup_decrypt((string)$streamed, $kBackup)));
+t_ok('streamed backup is compressed (smaller than the SQL)', strlen((string)$streamed) < strlen(implode('', $chunks)));
+t_eq('an older (one-piece gzencode) backup still opens', $sql, gzdecode((string)backup_decrypt((string)backup_encrypt((string)gzencode($sql, 6), $kBackup), $kBackup)));
+$emptyRun = backup_seal_stream(static function (callable $emit): void {
+}, $kBackup);
+t_eq('an export with nothing in it still makes a valid file', '', gzdecode((string)backup_decrypt((string)$emptyRun, $kBackup)));
+$threw = false;
+try {
+    backup_seal_stream(static function (callable $emit): void {
+        $emit('a');
+        throw new RuntimeException('db gone');
+    }, $kBackup);
+} catch (RuntimeException $e) {
+    $threw = true;
+}
+t_ok('a failing export is passed up, never saved half done', $threw);
+
+// ── Ending the response early ──
+t_eq('the command line cannot detach from a browser', false, backup_can_detach());
+t_eq('so ending the response says it did not detach (the slow part is skipped)', false, backup_finish_response());
+
 // ── What a business may report ──
 $now = 1800000000;
 $r = backup_clean_report(['last_at' => $now - 3600, 'size' => 123456, 'error_at' => 0, 'error_code' => '', 'offsite_at' => $now - 86400, 'requested_seen' => $now - 100, 'path' => '/home/x/backups/db.sql.gz'], $now);
@@ -63,8 +96,49 @@ try {
     backup_state_update(static function (array &$s): void { $s['tenants']['7']['report'] = ['last_at' => 5]; });
     t_eq('two updates keep each other\'s fields', 111, backup_requested_at(7));
     t_eq('report stored beside the request', 5, backup_state()['tenants']['7']['report']['last_at'] ?? null);
-    t_ok('claim today: first time yes', backup_claim_today());
-    t_ok('claim today: second time no', !backup_claim_today());
+    $day = backup_claim_today();
+    t_eq('claim today: first time gives today', date('Y-m-d'), $day);
+    t_eq('claim today: second time no', null, backup_claim_today());
+    backup_release_day((string)$day);
+    t_eq('a released day can be claimed again (a failed run is retried)', date('Y-m-d'), backup_claim_today());
+    backup_release_day('2000-01-01');
+    t_eq('releasing another day never clears today\'s mark', date('Y-m-d'), backup_state()['auto_day'] ?? null);
+
+    // A run that throws gives its claimed day back (no database: a PDO stand-in whose query() fails)
+    backup_release_day(date('Y-m-d'));
+    $day = backup_claim_today();
+    $noDb = new class extends PDO {
+        public function __construct()
+        {
+        }
+    };
+    $threw = false;
+    $logWas = ini_set('error_log', sys_get_temp_dir() . '/cp-backup-test.log');
+    try {
+        backup_run_all($noDb, 'first_sign_in', null, $day);
+    } catch (Throwable $e) {
+        $threw = true;
+    }
+    ini_set('error_log', (string)$logWas);
+    t_ok('the run threw (the stand-in has no database)', $threw);
+    t_ok('a run that throws gives today back', !isset(backup_state()['auto_day']));
+    // ... but a failed run never clears a day another (good) run marked
+    backup_state_update(static function (array &$s): void { $s['auto_day'] = date('Y-m-d'); });
+    try {
+        backup_run_all($noDb, 'button', null, null);
+    } catch (Throwable $e) {
+    }
+    t_eq('a failed button run leaves an earlier good run of today counted', date('Y-m-d'), backup_state()['auto_day'] ?? null);
+
+    // Shared-lock read: works while another handle holds a shared lock, empty when the file is missing
+    $fh = fopen($p, 'r');
+    flock($fh, LOCK_SH);
+    t_eq('state reads beside another reader', 111, backup_requested_at(7));
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    @unlink($p);
+    t_eq('no state file -> empty state', [], backup_state());
+    t_ok('a read never creates the state file', !is_file($p));
 } finally {
     if ($was === null) {
         @unlink($p);
@@ -85,6 +159,16 @@ t_ok('session fingerprint changes when the 2-step secret changes (reset)', auth_
 t_ok('valid email accepted', users_valid_email('new.person@example.com'));
 t_ok('not an email refused', !users_valid_email('new person'));
 t_ok('a too long email refused', !users_valid_email(str_repeat('a', 190) . '@example.com'));
+
+// ── Removing a user: only set-up admins count, and the acting admin must still be one ──
+$setUp = ['totp_secret' => 'JBSWY3DPEHPK3PXP'];
+$pending = ['totp_secret' => ''];
+t_eq('set-up admin removes a set-up admin when two are set up', '', users_remove_problem($setUp, $setUp, 2));
+t_ok('the last set-up admin is never removed', users_remove_problem($setUp, $setUp, 1) !== '');
+t_eq('a pending account can be removed while one admin is set up', '', users_remove_problem($setUp, $pending, 1));
+t_ok('an acting admin who was removed meanwhile cannot remove (two admins removing each other)', users_remove_problem(null, $setUp, 1) !== '');
+t_ok('an acting admin who is not set up (reset meanwhile) cannot remove', users_remove_problem($pending, $setUp, 2) !== '');
+t_eq('a user already gone', 'That user no longer exists.', users_remove_problem($setUp, null, 2));
 
 // ── Setup session ──
 $_SESSION = ['setup_admin_id' => 4, 'setup_email' => 'n@example.com', 'setup_at' => time(), 'setup_secret' => totp_generate_secret()];
