@@ -25,6 +25,8 @@
 //                     $data['modules'] (labels), $data['trial'] = [started, until, days_left, length, read_only_from, locked_from],
 //                     $data['offer'] = [[label, amount words]] (ending / ended), $data['plan'] = [title, every, amount, first_invoice]
 //                     (converted)
+//   go_live         : $data['tenant'], $data['client'] (optional), $data['type'], $data['modules'] ([[label, what it does]]),
+//                     $data['module_keys'], $data['site_url'], $data['staff_url'], $data['trial_until'] ('' when not on a trial)
 // Statement / payment request: $data['client'] (when known) is preferred over the tenant for names.
 // $company = billing_company() (email_company_defaults() is used for anything missing; 'email_signature' optional).
 
@@ -368,7 +370,27 @@ function em_text(string $title, string $greeting, string $message, array $paras,
 function email_kinds(): array
 {
     return ['invoice', 'quote', 'reminder', 'payment_request', 'statement', 'receipt', 'thank_you_payment', 'thank_you_business',
-        'welcome', 'quote_accepted', 'recurring_invoice', 'test', 'trial_started', 'trial_ending', 'trial_ended', 'trial_converted'];
+        'welcome', 'quote_accepted', 'recurring_invoice', 'test', 'trial_started', 'trial_ending', 'trial_ended', 'trial_converted', 'go_live'];
+}
+
+/** Plain words for what each licensed module does (go_live email). Keys as app/catalog.php catalog_modules(). */
+function em_module_intro(): array
+{
+    return [
+        'bookings' => 'Take and manage room bookings, check guests in and out, and see every room on one calendar.',
+        'housekeeping' => 'Cleaning and maintenance tasks for each room, so the front desk always knows which rooms are ready.',
+        'pos' => 'The restaurant and bar till: orders, open tabs, payments, and charges to a guest\'s room.',
+        'stock' => 'Ingredients and goods: deliveries from suppliers, stock counts, and what each sale uses up.',
+        'conference' => 'Conference and event enquiries, bookings and their invoices.',
+        'gym' => 'Gym packages, memberships, classes and check-ins.',
+        'finance' => 'Payments, invoices, receipts, refunds, shift close and the daily reports.',
+        'website_cms' => 'Your public website with online booking, kept up to date from the staff area.',
+        'station_kds' => 'A kitchen screen that shows each food order the moment it is placed.',
+        'station_bds' => 'A bar screen that shows each drinks order the moment it is placed.',
+        'station_cds' => 'A coffee bar screen for coffee and hot drink orders.',
+        'station_room_service' => 'Room service orders, sent to the kitchen and charged to the guest\'s room.',
+        'ai_assistant' => 'The Assistant: ask in plain words, such as "who arrives today?", and get the answer from your own records.',
+    ];
 }
 
 /** Who to call about a trial: the company phone, then its first email. Pure. */
@@ -724,6 +746,64 @@ function email_render(string $kind, array $data, array $company): array
                 }
                 $extraHtml = '';
                 $extraText = '';
+            }
+            break;
+
+        case 'go_live':
+            // Sent by hand from the business page when it is ready to go live. Never carries passwords or login details.
+            $tn = (array)($data['tenant'] ?? []);
+            $bn = trim((string)($tn['name'] ?? '')) !== '' ? (string)$tn['name'] : 'your business';
+            $name = em_greeting_name([], $tn, $client);
+            $who = em_trial_contact($c);
+            $mods = [];
+            foreach ((array)($data['modules'] ?? []) as $m) {
+                if (is_array($m) && trim((string)($m[0] ?? '')) !== '') {
+                    $mods[] = [(string)$m[0], (string)($m[1] ?? '')];
+                }
+            }
+            $keys = array_map('strval', (array)($data['module_keys'] ?? []));
+            $siteUrl = (string)($data['site_url'] ?? '');
+            $staffUrl = (string)($data['staff_url'] ?? '');
+            $trialUntil = em_date($data['trial_until'] ?? '');
+            $pay = false;
+            $title = 'Welcome';
+            $subject = 'Your new system at ' . $bn . ' is ready: how to get started';
+            $paras = [
+                'Your new system for ' . $bn . ' is ready to use. This email introduces it and explains how to get started.',
+                'Everything runs in one place, in a web browser on a computer, tablet or phone, with nothing to install.'
+                    . (in_array('website_cms', $keys, true) && in_array('bookings', $keys, true)
+                        ? ' Your website and the staff area share the same information, so a booking made online appears at the front desk straight away.' : ''),
+                'Signing in: the staff area is at ' . ($staffUrl !== '' ? $staffUrl : 'your website address followed by /admin/') . '. Each person has their own '
+                    . 'login, so every action is recorded under their name. Login details are given to you separately and are never sent in emails like this one. '
+                    . 'Please change your password the first time you sign in.',
+                'To get started: sign in and change your password; check your rooms, rates and policies'
+                    . (in_array('pos', $keys, true) ? '; check the menu and prices on the till' : '')
+                    . '; add each member of staff with their own login and the right role; then make one practice booking from start to finish.',
+                'Every screen has a step-by-step guide in plain words' . (in_array('ai_assistant', $keys, true) ? ', and the Assistant can answer questions about your own records' : '')
+                    . '. Your data belongs to you: it is backed up every day and is never deleted.',
+                ($trialUntil !== '' ? 'You are on a free trial until ' . $trialUntil . ', and we will remind you before it ends. ' : '')
+                    . 'If you have any questions, or would like us to walk your team through the system, call or write to us: ' . $who . '.',
+            ];
+            $rows = [['Business', $bn]];
+            if ($siteUrl !== '') {
+                $rows[] = ['Website', $siteUrl];
+            }
+            if ($staffUrl !== '') {
+                $rows[] = ['Staff area', $staffUrl, true];
+            }
+            if (trim((string)($data['type'] ?? '')) !== '') {
+                $rows[] = ['Package', (string)$data['type']];
+            }
+            if ($trialUntil !== '') {
+                $rows[] = ['Free trial until', $trialUntil];
+            }
+            if ($mods) {
+                $extraHtml = em_grid(['What is included', 'What it does'], ['l', 'l'], $mods, $c);
+                $extraText = "WHAT IS INCLUDED\n";
+                foreach ($mods as $m) {
+                    $extraText .= '  ' . $m[0] . ($m[1] !== '' ? ': ' . $m[1] : '') . "\n";
+                }
+                $extraText = rtrim($extraText);
             }
             break;
 

@@ -10,6 +10,8 @@
 //   kind welcome                      : id = cp_clients.id
 //   kind trial_started | trial_ending | trial_ended | trial_converted : id = cp_tenants.id (Part 3; to the business's client,
 //        else its billing email; $opts['today'] = the day the daily job ran)
+//   kind go_live                      : id = cp_tenants.id. Sent by hand from the business page: introduces the system
+//        (what is included, the website and staff-area addresses, first steps). Never carries login details.
 //   $opts: to (array|comma string; overrides the default recipients), cc (array|string; when the key is present it replaces the
 //   default cc), message (personal note at the top), from / until / currency (statement), title (recurring invoice).
 // Recipients: the client's email + cc_emails; for older rows without a client, the business's billing_email + cc_emails;
@@ -30,7 +32,7 @@ function billing_mail_tolerance(): float
 function billing_mail_kinds(): array
 {
     return ['invoice', 'quote', 'reminder', 'payment_request', 'statement', 'receipt', 'thank_you_payment', 'thank_you_business',
-        'welcome', 'quote_accepted', 'recurring_invoice', 'trial_started', 'trial_ending', 'trial_ended', 'trial_converted'];
+        'welcome', 'quote_accepted', 'recurring_invoice', 'trial_started', 'trial_ending', 'trial_ended', 'trial_converted', 'go_live'];
 }
 
 /** Plain words for a kind ("Thank you for payment"), for the Outbox and Automations pages. */
@@ -40,7 +42,7 @@ function billing_mail_kind_label(string $kind): string
         'statement' => 'Statement', 'receipt' => 'Receipt', 'thank_you_payment' => 'Thank you for your payment',
         'thank_you_business' => 'Thank you for your business', 'welcome' => 'Welcome', 'quote_accepted' => 'Quotation accepted',
         'recurring_invoice' => 'Regular invoice', 'test' => 'Test email', 'trial_started' => 'Free trial started',
-        'trial_ending' => 'Free trial ending', 'trial_ended' => 'Free trial ended', 'trial_converted' => 'Thank you for choosing us'];
+        'trial_ending' => 'Free trial ending', 'trial_ended' => 'Free trial ended', 'trial_converted' => 'Thank you for choosing us', 'go_live' => 'System introduction (go-live)'];
     return $labels[$kind] ?? ucfirst(str_replace('_', ' ', $kind));
 }
 
@@ -482,6 +484,35 @@ function billing_mail_build(PDO $pdo, string $kind, int $id, array $opts, bool $
                 $client = billing_mail_client_for_tenant($pdo, $id);
                 $data = trial_mail_data($pdo, $tenant, $kind, $today) + $data;
                 $data['client'] = $client;
+                $out['tenant_id'] = $id;
+                break;
+
+            case 'go_live':
+                $st = $pdo->prepare('SELECT * FROM cp_tenants WHERE id = ?');
+                $st->execute([$id]);
+                $tenant = $st->fetch() ?: null;
+                if (!$tenant) {
+                    return $fail('Business not found.');
+                }
+                $labels = catalog_modules();
+                $intro = em_module_intro();
+                $keys = catalog_tenant_modules($tenant);
+                $mods = [];
+                foreach ($keys as $k) {
+                    $mods[] = [$labels[$k] ?? $k, $intro[$k] ?? ''];
+                }
+                $dom = licence_normalise_domain((string)($tenant['domain'] ?? ''));
+                $dom = licence_domain_valid($dom) ? $dom : '';
+                $data['tenant'] = $tenant;
+                $data['client'] = billing_mail_client_for_tenant($pdo, $id);
+                $data['type'] = catalog_type_label((string)($tenant['business_type'] ?? 'custom'));
+                $data['modules'] = $mods;
+                $data['module_keys'] = $keys;
+                $data['site_url'] = $dom !== '' ? 'https://' . $dom . '/' : '';
+                $data['staff_url'] = $dom !== '' ? 'https://' . $dom . '/admin/login.php' : '';
+                $data['trial_until'] = !empty($tenant['trial_until']) && empty($tenant['trial_converted_at'])
+                    && (string)$tenant['trial_until'] >= date('Y-m-d') ? (string)$tenant['trial_until'] : '';
+                $client = $data['client'];
                 $out['tenant_id'] = $id;
                 break;
 

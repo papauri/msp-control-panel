@@ -4,6 +4,7 @@ require __DIR__ . '/_harness.php';
 require __DIR__ . '/../../app/mailer.php';
 require __DIR__ . '/../../app/email_templates.php';
 require __DIR__ . '/../../app/billing_mail.php';
+require_once __DIR__ . '/../../app/catalog.php';
 
 $company = email_company_defaults();
 $company['payment_details'] = "MWK Account\n-----------------\nStandard Bank";
@@ -42,6 +43,11 @@ $trial = ['tenant' => ['name' => 'Demo ' . $evil, 'contact_name' => 'Mary'], 'ty
 foreach (['trial_started', 'trial_ending', 'trial_ended', 'trial_converted'] as $k) {
     $cases[$k] = $trial;
 }
+// Go-live introduction (2026-11-09): names, module words and addresses carry the hostile string too.
+$cases['go_live'] = ['tenant' => ['name' => 'Demo ' . $evil, 'contact_name' => 'Mary'], 'type' => 'Full Hotel',
+    'modules' => [['Bookings ' . $evil, 'Take bookings ' . $evil], ['Point of Sale (till)', '']],
+    'module_keys' => ['bookings', 'website_cms', 'pos', 'ai_assistant'],
+    'site_url' => 'https://demo.example/', 'staff_url' => 'https://demo.example/admin/login.php', 'trial_until' => '2026-12-09'];
 t_eq('every template kind is tested', email_kinds(), array_values(array_intersect(email_kinds(), array_keys($cases))));
 
 foreach ($cases as $kind => $data) {
@@ -163,6 +169,23 @@ t_eq('client party for the PDF', 'Plot 1' . "\n" . 'Lilongwe', billing_mail_clie
 // Kinds and labels.
 t_ok('send kinds include the new ones', !array_diff(['thank_you_payment', 'thank_you_business', 'welcome', 'quote_accepted', 'recurring_invoice'], billing_mail_kinds()));
 t_eq('kind label', 'Thank you for your payment', billing_mail_kind_label('thank_you_payment'));
+
+// Go-live introduction email.
+t_ok('go_live can be sent', in_array('go_live', billing_mail_kinds(), true));
+$gl = email_render('go_live', $cases['go_live'], $company);
+t_ok('go_live: subject names the business', strpos($gl['subject'], 'is ready: how to get started') !== false);
+t_ok('go_live: staff sign-in address', strpos($gl['html'], 'https://demo.example/admin/login.php') !== false);
+t_ok('go_live: modules table escaped', strpos($gl['html'], 'Take bookings &lt;script&gt;') !== false && strpos($gl['html'], '<script>') === false);
+t_ok('go_live: modules in text', strpos($gl['text'], 'WHAT IS INCLUDED') !== false);
+t_ok('go_live: trial line', strpos($gl['html'], 'free trial until 09/12/2026') !== false);
+t_ok('go_live: till step (pos)', strpos($gl['html'], 'menu and prices on the till') !== false);
+t_ok('go_live: no payment details', strpos($gl['html'], 'Standard Bank') === false);
+t_ok('go_live: never claims to carry passwords', stripos($gl['text'], 'never sent in emails like this one') !== false);
+$gl2 = email_render('go_live', ['tenant' => ['name' => 'Gym Co'], 'module_keys' => ['gym'], 'modules' => [['Gym & Fitness', '']]], $company);
+t_ok('go_live: no trial line when not on trial', stripos($gl2['html'], 'free trial') === false);
+t_ok('go_live: no till step without pos', strpos($gl2['html'], 'on the till') === false);
+t_ok('go_live: fallback sign-in words without a domain', strpos($gl2['html'], 'followed by /admin/') !== false);
+t_ok('go_live: every module has words', !array_diff(array_keys(catalog_modules()), array_keys(em_module_intro())));
 
 // The sender is swappable (tests never reach mail_send).
 billing_mail_sender(function (array $m) {

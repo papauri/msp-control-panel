@@ -206,6 +206,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('ok', 'Override cleared. Status now follows the paid-until date.');
                 back_to($postId);
             }
+        } elseif ($action === 'go_live_send' && $postId > 0) {
+            if (!billing_once_consume('go_live_' . $postId, (string)($_POST['once'] ?? ''))) {
+                flash_set('info', 'This introduction email was already sent (the form was sent twice).');
+                back_to($postId);
+            }
+            if (!billing_has_mail()) {
+                flash_set('error', 'Sending email is not available.');
+                back_to($postId);
+            }
+            $note = isset($_POST['message']) && is_string($_POST['message']) ? trim($_POST['message']) : '';
+            $sent = billing_send($pdo, 'go_live', $postId, ['message' => mb_substr($note, 0, 2000)], $adminId);
+            flash_set(!empty($sent['ok']) ? 'ok' : 'error', !empty($sent['ok'])
+                ? 'Introduction email sent to ' . implode(', ', (array)$sent['to']) . (!empty($sent['test']) ? ' (test mode: it went only to the test address).' : '.')
+                : 'The introduction email was NOT sent: ' . (string)$sent['error']);
+            back_to($postId);
         } elseif ($action === 'trial_start' && $postId > 0) {
             [$days, $err] = trial_days_from_form((string)($_POST['trial_preset'] ?? ''), (string)($_POST['trial_custom'] ?? ''));
             $err = $err !== '' ? $err : ($days === 0 ? 'Choose the trial length.' : trial_start($pdo, $postId, $days, $adminId, $today));
@@ -410,6 +425,16 @@ if ($tenant) {
         echo '<p class="muted">Not on a free trial. A trial is only for a business that has never paid.</p>';
     }
     echo '</section>';
+
+    // Go-live introduction email (owner 2026-11-09): sent by hand when the business is ready to go live.
+    echo '<section class="card" id="golive"><h2>Introduction email</h2>'
+        . '<p class="muted">When this business is ready to go live, send them an email that introduces the system: what is included, '
+        . 'the website and staff sign-in addresses, and the first steps. It never contains passwords; give login details separately.</p>'
+        . '<form method="post" action="tenant.php?id=' . $tid0 . '#golive" class="js-once">' . $tHidden
+        . '<input type="hidden" name="action" value="go_live_send">'
+        . '<input type="hidden" name="once" value="' . e(billing_once_issue('go_live_' . $tid0)) . '">'
+        . '<label>Personal note at the top (optional)<textarea name="message" rows="3" maxlength="2000"></textarea></label>'
+        . '<button type="submit" class="secondary">Send introduction email</button></form></section>';
 
     // Billing (2026-11-09): what this business owes on sent invoices.
     $bill = billing_tenant_summary($pdo, (int)$tenant['id']);
