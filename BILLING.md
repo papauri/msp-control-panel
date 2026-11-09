@@ -168,6 +168,8 @@ click, per the owner's setting. Same stack rules as Part 1. Migration 005 is app
   last_document_id, last_run_at)`.
 - `cp_outbox(kind, ref_id, client_id, document_id, reason, opts_json, status pending|sent|failed|skipped, dedupe_key UNIQUE,
   error, decided_by, created_at, decided_at)` — automated emails waiting for approval (or a record of auto-sent ones).
+  A row being sent is held as `failed` with `error = OUTBOX_SENDING_NOTE` (app/automation.php) and becomes `sent` only after
+  the email went; for 10 minutes nobody else can send or skip it, after that the Outbox shows it as "Interrupted".
 
 ## Agents and ownership (do not edit another agent's files)
 **Agent CLIENTS** — app/clients.php, app/recurring.php, public/clients.php, public/client.php, public/recurring.php, and

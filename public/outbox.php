@@ -50,9 +50,15 @@ $docLink = static function (array $o): string {
     $word = ($o['document_kind'] ?? '') === 'quote' ? 'Quotation ' : 'Invoice ';
     return '<a href="document.php?id=' . (int)$o['document_id'] . '">' . e($word . $o['document_number']) . '</a>';
 };
-$statusPill = static function (string $s): string {
+$statusPill = static function (array $o): string {
+    $s = (string)$o['status'];
+    $state = outbox_send_state($o);
     $cls = ['pending' => 'pill-grace', 'sent' => 'pill-active', 'failed' => 'pill-suspended', 'skipped' => 'pill-read_only'][$s] ?? '';
     $label = ['pending' => 'Waiting', 'sent' => 'Sent', 'failed' => 'Failed', 'skipped' => 'Skipped'][$s] ?? $s;
+    if ($state !== '') {
+        $cls = $state === 'sending' ? 'pill-grace' : 'pill-suspended';
+        $label = $state === 'sending' ? 'Sending' : 'Interrupted';
+    }
     return '<span class="pill ' . $cls . '">' . e($label) . '</span>';
 };
 
@@ -73,12 +79,18 @@ if ($tab === 'waiting') {
     foreach ($rows as $o) {
         $p = outbox_preview($pdo, $o);
         $failed = $o['status'] === 'failed';
+        $state = outbox_send_state($o);
         echo '<section class="card au-item">'
-            . '<div class="au-head"><h2>' . e(billing_mail_kind_label((string)$o['kind'])) . '</h2> ' . $statusPill((string)$o['status']) . '</div>'
+            . '<div class="au-head"><h2>' . e(billing_mail_kind_label((string)$o['kind'])) . '</h2> ' . $statusPill($o) . '</div>'
             . '<p class="au-meta"><span>' . e((string)$o['reason']) . '</span><span>Client: ' . $clientLink($o) . '</span>'
             . ($docLink($o) !== '' ? '<span>' . $docLink($o) . '</span>' : '')
             . '<span class="muted">Prepared ' . e(billing_date((string)$o['created_at'])) . ' ' . e(substr((string)$o['created_at'], 11, 5)) . '</span></p>';
-        if ($failed && trim((string)$o['error']) !== '') {
+        if ($state === 'sending') {
+            echo '<p class="muted">This email is being sent right now. Refresh the page in a minute.</p>';
+        } elseif ($state === 'interrupted') {
+            echo '<p class="flash flash-error">The last send was interrupted before it finished, so this email may or may not have gone out. '
+                . 'Check your Sent mail first: if it is there, skip this one; if not, retry it.</p>';
+        } elseif ($failed && trim((string)$o['error']) !== '') {
             echo '<p class="flash flash-error">Last attempt failed: ' . e((string)$o['error']) . '</p>';
         }
         if ($p['ok']) {
@@ -90,6 +102,10 @@ if ($tab === 'waiting') {
                 . '</dl><pre class="au-text">' . e(implode("\n", $p['lines'])) . "\n&hellip;</pre>";
         } else {
             echo '<p class="flash flash-error">Cannot be sent as it stands: ' . e($p['error']) . '</p>';
+        }
+        if ($state === 'sending') {
+            echo '</section>';
+            continue;
         }
         echo '<form method="post" action="outbox.php" class="au-decide">' . csrf_field() . '<input type="hidden" name="id" value="' . (int)$o['id'] . '">'
             . '<label>Personal note (optional; shown at the top of the email, or kept as the reason if you skip)'
@@ -114,7 +130,7 @@ if ($tab === 'waiting') {
                 . '<td data-label="Email">' . e(billing_mail_kind_label((string)$o['kind'])) . ($docLink($o) !== '' ? '<br><small>' . $docLink($o) . '</small>' : '') . '</td>'
                 . '<td data-label="Client">' . $clientLink($o) . '</td>'
                 . '<td data-label="Why">' . e((string)$o['reason']) . (trim((string)$o['error']) !== '' ? '<br><small class="muted">' . e((string)$o['error']) . '</small>' : '') . '</td>'
-                . '<td data-label="Status">' . $statusPill((string)$o['status']) . '</td>'
+                . '<td data-label="Status">' . $statusPill($o) . '</td>'
                 . '<td data-label="Decided" class="nw">' . $how . '</td></tr>';
         }
         echo '</tbody></table></div>';

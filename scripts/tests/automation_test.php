@@ -91,6 +91,19 @@ foreach (outbox_claimable('skip') as $s) {
     t_ok("claimable skip agrees with rules ($s)", outbox_decision_error($s, 'skip') === '');
 }
 
+// A send in progress is held as failed + the sending note; it only says "sent" once the email really went.
+$t0 = strtotime('2026-11-09 10:00:00');
+$sending = ['status' => 'failed', 'error' => OUTBOX_SENDING_NOTE, 'decided_at' => '2026-11-09 10:00:00'];
+t_eq('send state: just claimed = sending', 'sending', outbox_send_state($sending, $t0 + 60));
+t_eq('send state: still sending at 9 min', 'sending', outbox_send_state($sending, $t0 + 9 * 60));
+t_eq('send state: interrupted after 10 min', 'interrupted', outbox_send_state($sending, $t0 + 10 * 60));
+t_eq('send state: no time = interrupted', 'interrupted', outbox_send_state(['decided_at' => null] + $sending, $t0));
+t_eq('send state: ordinary failure', '', outbox_send_state(['error' => 'SMTP said no'] + $sending, $t0));
+t_eq('send state: pending', '', outbox_send_state(['status' => 'pending'] + $sending, $t0));
+t_eq('send state: sent', '', outbox_send_state(['status' => 'sent', 'error' => null] + $sending, $t0));
+t_ok('not-sending SQL has 2 placeholders', substr_count(outbox_not_sending_sql(), '?') === 2 && count(outbox_not_sending_args()) === 2);
+t_ok('sending note fits the error column', strlen(OUTBOX_SENDING_NOTE) <= 500);
+
 // Preview lines: skip the title line and empty lines.
 t_eq('preview lines', ['Dear Grace,', 'Para one.'], outbox_text_lines("RECEIPT - ProManaged IT\n\nDear Grace,\n\nPara one.\n\nPara two.", 2));
 t_eq('preview lines empty', [], outbox_text_lines('', 3));

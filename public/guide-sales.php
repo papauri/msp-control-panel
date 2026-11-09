@@ -113,7 +113,7 @@ view_head('Sales and billing guide');
     <li><strong>Free trial started / ending / ended</strong> and <strong>Thank you for choosing us</strong> (section 9) &mdash; automatic.</li>
     <li><strong>Recurring invoices</strong> follow each schedule's own choice.</li>
 </ul>
-<p><strong>Outbox</strong>: everything waiting for you, with a preview (subject, the first lines, attachments). <strong>Send</strong> (add a note if you like) or <strong>Skip</strong>. A failed send stays there with <strong>Retry send</strong>. Nothing is ever sent twice for the same payment, invoice or day.</p>
+<p><strong>Outbox</strong>: everything waiting for you, with a preview (subject, the first lines, attachments). <strong>Send</strong> (add a note if you like) or <strong>Skip</strong>. A failed send stays there with <strong>Retry send</strong>. An email shows <strong>Sent</strong> only once it has really gone. While it is going out it shows <strong>Sending</strong> for a moment. If the server stopped in the middle, it shows <strong>Interrupted</strong>: look in your Sent mail first, then <strong>Skip</strong> it if it went, or <strong>Retry send</strong> if it did not. Nothing is ever sent twice for the same payment, invoice or day.</p>
 <p><strong>The daily job</strong> makes the recurring invoices and the reminders. Set it once in cPanel &rarr; Cron Jobs (once a day):<br>
 <code>cd /home/CPANELUSER/msp-control-panel &amp;&amp; php scripts/billing-daily.php &gt;&gt; logs/billing-daily.log 2&gt;&amp;1</code><br>
 <strong>Automations</strong> &rarr; <strong>Run the daily job now&hellip;</strong> shows what it would do, then runs it.</p>

@@ -256,7 +256,8 @@ function automation_dispatch(PDO $pdo, string $kind, int $refId, array $opts, st
         $res['error'] = 'The automation could not run: ' . $e->getMessage();
         if ($res['outbox_id'] > 0) {
             try {
-                $pdo->prepare("UPDATE cp_outbox SET status = 'failed', error = ? WHERE id = ? AND status IN ('pending','sent')")
+                // only a row that never reached sending: a row past the claim keeps its own honest state
+                $pdo->prepare("UPDATE cp_outbox SET status = 'failed', error = ? WHERE id = ? AND status = 'pending'")
                     ->execute([mb_substr($res['error'], 0, 500, 'UTF-8'), $res['outbox_id']]);
             } catch (Throwable $e2) {
                 error_log('automation_dispatch mark failed: ' . $e2->getMessage());
@@ -374,9 +375,40 @@ function outbox_claimable(string $action): array
     return $action === 'send' ? ['pending', 'failed', 'skipped'] : ['pending', 'failed'];
 }
 
+// While a row is being sent it is held as 'failed' carrying this exact note (no schema change needed). It only becomes
+// 'sent' once the email has really gone, so a crash or timeout mid-send can never leave a row that says "Sent" when it
+// was not. For OUTBOX_SENDING_MINUTES nobody else can send or skip it; after that it is an interrupted send the owner
+// checks before retrying.
+const OUTBOX_SENDING_NOTE = 'Sending was started but never confirmed: it may or may not have gone out. Check your Sent mail before you retry.';
+const OUTBOX_SENDING_MINUTES = 10;
+
+/** Pure. 'sending' (being sent right now), 'interrupted' (a send that never finished) or '' for an Outbox row. */
+function outbox_send_state(array $row, ?int $now = null): string
+{
+    if ((string)($row['status'] ?? '') !== 'failed' || (string)($row['error'] ?? '') !== OUTBOX_SENDING_NOTE) {
+        return '';
+    }
+    $at = strtotime((string)($row['decided_at'] ?? ''));
+    $now = $now ?? time();
+    return $at !== false && $now - $at < OUTBOX_SENDING_MINUTES * 60 ? 'sending' : 'interrupted';
+}
+
+/** SQL (with 2 placeholders: note, cut-off time) that leaves out rows being sent right now. */
+function outbox_not_sending_sql(): string
+{
+    return "NOT (status = 'failed' AND COALESCE(error, '') = ? AND COALESCE(decided_at, '1970-01-01 00:00:00') > ?)";
+}
+
+/** The two values for outbox_not_sending_sql(). */
+function outbox_not_sending_args(): array
+{
+    return [OUTBOX_SENDING_NOTE, date('Y-m-d H:i:s', time() - OUTBOX_SENDING_MINUTES * 60)];
+}
+
 /**
- * Sends one Outbox row: claims it (status -> sent) with a conditional UPDATE so two clicks or two runs cannot both send,
- * then sends; a failure turns the row into failed with the reason. $message = optional personal note.
+ * Sends one Outbox row: claims it with a conditional UPDATE (held as "sending", see OUTBOX_SENDING_NOTE) so two clicks or
+ * two runs cannot both send, then sends; only a confirmed send marks it sent, a failure keeps it failed with the reason.
+ * $message = optional personal note.
  */
 function outbox_send_row(PDO $pdo, int $id, int $adminId, string $message): array
 {
@@ -388,15 +420,19 @@ function outbox_send_row(PDO $pdo, int $id, int $adminId, string $message): arra
         return ['ok' => false, 'error' => 'That Outbox item no longer exists.', 'status' => ''];
     }
     $err = outbox_decision_error((string)$row['status'], 'send');
+    if ($err === '' && outbox_send_state($row) === 'sending') {
+        $err = 'This email is being sent right now. Refresh the page in a minute.';
+    }
     if ($err !== '') {
         return ['ok' => false, 'error' => $err, 'status' => (string)$row['status']];
     }
     $now = date('Y-m-d H:i:s');
     $in = outbox_claimable('send');
-    $claim = $pdo->prepare('UPDATE cp_outbox SET status = \'sent\', error = NULL, decided_by = ?, decided_at = ? WHERE id = ? AND status IN (?, ?, ?)');
-    $claim->execute([$adminId > 0 ? $adminId : null, $now, $id, $in[0], $in[1], $in[2]]);
+    $claim = $pdo->prepare('UPDATE cp_outbox SET status = \'failed\', error = ?, decided_by = ?, decided_at = ? WHERE id = ? AND status IN (?, ?, ?) AND '
+        . outbox_not_sending_sql());
+    $claim->execute(array_merge([OUTBOX_SENDING_NOTE, $adminId > 0 ? $adminId : null, $now, $id, $in[0], $in[1], $in[2]], outbox_not_sending_args()));
     if ($claim->rowCount() !== 1) {
-        return ['ok' => false, 'error' => 'This email is already being handled.', 'status' => 'sent'];
+        return ['ok' => false, 'error' => 'This email is already being handled.', 'status' => (string)$row['status']];
     }
     $opts = json_decode((string)($row['opts_json'] ?? ''), true);
     $opts = is_array($opts) ? $opts : [];
@@ -410,14 +446,22 @@ function outbox_send_row(PDO $pdo, int $id, int $adminId, string $message): arra
         error_log('outbox_send_row #' . $id . ': ' . get_class($e) . ': ' . $e->getMessage());
         $r = ['ok' => false, 'error' => 'The email could not be sent: ' . $e->getMessage(), 'to' => [], 'test' => false];
     }
-    if (!$r['ok']) {
-        $pdo->prepare("UPDATE cp_outbox SET status = 'failed', error = ? WHERE id = ?")
-            ->execute([mb_substr((string)$r['error'], 0, 500, 'UTF-8'), $id]);
+    if ($r['ok']) {
+        // only our own claim (same note and time): a send that hung past the window cannot overwrite a newer attempt
+        $pdo->prepare("UPDATE cp_outbox SET status = 'sent', error = NULL WHERE id = ? AND status = 'failed' AND error = ? AND decided_at = ?")
+            ->execute([$id, OUTBOX_SENDING_NOTE, $now]);
+    } else {
+        $pdo->prepare("UPDATE cp_outbox SET status = 'failed', error = ? WHERE id = ? AND status = 'failed' AND error = ? AND decided_at = ?")
+            ->execute([mb_substr((string)$r['error'], 0, 500, 'UTF-8'), $id, OUTBOX_SENDING_NOTE, $now]);
     }
-    audit_log($pdo, $adminId > 0 ? $adminId : null, $r['ok'] ? 'outbox_sent' : 'outbox_send_failed', null,
-        ['outbox_id' => $id, 'status' => $row['status']],
-        ['outbox_id' => $id, 'kind' => $row['kind'], 'ref_id' => (int)$row['ref_id'], 'status' => $r['ok'] ? 'sent' : 'failed',
-            'to' => $r['to'] ?? [], 'test' => !empty($r['test']), 'note' => $message !== '', 'error' => $r['ok'] ? null : $r['error']]);
+    try {
+        audit_log($pdo, $adminId > 0 ? $adminId : null, $r['ok'] ? 'outbox_sent' : 'outbox_send_failed', null,
+            ['outbox_id' => $id, 'status' => $row['status']],
+            ['outbox_id' => $id, 'kind' => $row['kind'], 'ref_id' => (int)$row['ref_id'], 'status' => $r['ok'] ? 'sent' : 'failed',
+                'to' => $r['to'] ?? [], 'test' => !empty($r['test']), 'note' => $message !== '', 'error' => $r['ok'] ? null : $r['error']]);
+    } catch (Throwable $e) { // the email went (or not) either way: a missing audit line must not change the answer
+        error_log('outbox_send_row audit #' . $id . ': ' . $e->getMessage());
+    }
     return ['ok' => (bool)$r['ok'], 'error' => (string)$r['error'], 'status' => $r['ok'] ? 'sent' : 'failed', 'to' => $r['to'] ?? [],
         'test' => !empty($r['test'])];
 }
@@ -436,10 +480,15 @@ function outbox_decide(PDO $pdo, int $id, string $action, int $adminId, string $
     if ($action === 'send') {
         return outbox_send_row($pdo, $id, $adminId, $message);
     }
+    if (outbox_send_state($row) === 'sending') {
+        return ['ok' => false, 'error' => 'This email is being sent right now. Refresh the page in a minute.', 'status' => (string)$row['status']];
+    }
     $note = trim($message);
     $in = outbox_claimable('skip');
-    $st = $pdo->prepare("UPDATE cp_outbox SET status = 'skipped', error = ?, decided_by = ?, decided_at = ? WHERE id = ? AND status IN (?, ?)");
-    $st->execute([$note !== '' ? mb_substr('Skipped: ' . $note, 0, 500, 'UTF-8') : null, $adminId > 0 ? $adminId : null, date('Y-m-d H:i:s'), $id, $in[0], $in[1]]);
+    $st = $pdo->prepare("UPDATE cp_outbox SET status = 'skipped', error = ?, decided_by = ?, decided_at = ? WHERE id = ? AND status IN (?, ?) AND "
+        . outbox_not_sending_sql());
+    $st->execute(array_merge([$note !== '' ? mb_substr('Skipped: ' . $note, 0, 500, 'UTF-8') : null, $adminId > 0 ? $adminId : null, date('Y-m-d H:i:s'), $id,
+        $in[0], $in[1]], outbox_not_sending_args()));
     if ($st->rowCount() !== 1) {
         return ['ok' => false, 'error' => 'This email has already been handled.', 'status' => ''];
     }
