@@ -197,6 +197,12 @@ if (billing_has_mail() && function_exists('mail_status')) {
     if ($testTo !== '') {
         echo '<p class="flash flash-info">Test mode: every email goes only to ' . e($testTo) . ' (MAIL_TEST_TO), never to customers.</p>';
     }
+    $pwOff = pwreset_off_reason();
+    echo '<p>"Forgot your password?" emails: ' . ($pwOff === '' ? '<strong>on</strong> <span class="muted">(the link changes the password only; a 6-digit code is still needed)</span>'
+            : '<strong>off</strong> <span class="muted">' . e($pwOff) . '</span>') . '</p>';
+    if ($pwOff === '' && $testTo !== '') {
+        echo '<p class="flash flash-info">While test mode is on, every reset link goes to ' . e($testTo) . ', not to the person who asked. Remove MAIL_TEST_TO before your users rely on it.</p>';
+    }
     echo '<form method="post" action="settings.php#email">' . csrf_field() . '<input type="hidden" name="action" value="test_email">'
         . '<button type="submit" class="secondary">Send a test email</button> <span class="muted">to ' . e($testTo !== '' ? $testTo : $admin['email']) . '</span></form>';
 } else {

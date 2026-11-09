@@ -73,7 +73,8 @@ That's it. The business works normally straight away: no banner, no locks, no ch
    cPanel → **Terminal** → type `cd msp-control-panel`, then
    `php scripts/reset-2fa.php you@example.com` (your sign-in email). It prints a new secret: add it to your
    authenticator app by hand and delete the old entry. Your password does not change.
-5. Forgot your password and you are the only admin? Same Terminal, then `php scripts/reset-password.php you@example.com`.
+5. Forgot your password? Use **Forgot your password?** on the sign-in page (you still need your 6-digit code). If that link
+   is not there (email not set up) and you are the only admin: same Terminal, then `php scripts/reset-password.php you@example.com`.
    It asks for a new password; your 6-digit codes stay as they are.
 
 ## G. Moving the panel to its own database (it shares the Liwonde database for now)

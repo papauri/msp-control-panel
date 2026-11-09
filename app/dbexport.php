@@ -4,8 +4,11 @@
 // password + fresh code) and the panel's own encrypted backups (backup.php). Read-only on the database.
 // Output: CREATE TABLE IF NOT EXISTS + INSERT rows, importable in phpMyAdmin or with mysql < file.
 
-/** Tables whose rows are not worth moving (they rebuild themselves); their structure is still exported. */
-const DBEXPORT_SKIP_ROWS = ['cp_rate_limits'];
+/**
+ * Tables whose rows are not worth moving (they rebuild themselves); their structure is still exported.
+ * cp_password_resets: links that last 30 minutes; never worth keeping in a backup or a move.
+ */
+const DBEXPORT_SKIP_ROWS = ['cp_rate_limits', 'cp_password_resets'];
 
 /** @return string[] the cp_ tables in this database, sorted */
 function dbexport_tables(PDO $pdo): array

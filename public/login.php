@@ -66,5 +66,7 @@ echo '<form method="post" action="login.php" autocomplete="off">' . csrf_field()
     . '<label>6-digit code from your authenticator app'
     . '<input type="text" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code"></label>'
     . '<p class="muted">First time signing in, or your account was reset? Leave the code empty: the next page sets up your codes.</p>'
-    . '<button type="submit">Sign in</button></form></section>';
+    . '<button type="submit">Sign in</button></form>'
+    . (pwreset_available() ? '<p><a href="forgot.php">Forgot your password?</a></p>' : '')
+    . '</section>';
 view_foot();

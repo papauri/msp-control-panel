@@ -154,7 +154,7 @@ view_head('Guide');
     <li>Your phone clock must be set to automatic. If the time is wrong, the 6-digit code will not work.</li>
 </ul>
 <p><strong>First sign-in</strong> (you were just added, or an admin reset you): type your email and the temporary password you were given and leave the code empty. The next page shows a key to add to your authenticator app; type the code it shows and choose your own password. You have 15 minutes to finish. See section 15.</p>
-<p class="muted">If something goes wrong: wait 15 minutes, then sign in again. Forgot your password or lost your phone? Ask another admin to reset you on the <strong>Users</strong> page. If you are the only admin, see 12 F.</p>
+<p class="muted">If something goes wrong: wait 15 minutes, then sign in again. Forgot your password? Choose <strong>Forgot your password?</strong> on the sign-in page: you get an email with a link (it works once, for 30 minutes), choose a new password and type a 6-digit code. Lost your phone? Ask another admin to reset you on the <strong>Users</strong> page. If you are the only admin, see 12 F.</p>
 
 <h2>10. Moving to a real domain</h2>
 <p>When a business moves its website to a new address, update the licence the same day.</p>
@@ -241,7 +241,7 @@ view_head('Guide');
     <li>Tried 5 times? Wait 15 minutes, or sign in from another network (for example your phone's mobile data).</li>
     <li>Still not working: check <em>msp-control-panel/keys/licence-private.pem</em> is there (12 B). Your codes are protected with it; put it back from your offline backup if it is missing.</li>
     <li>Lost the phone? Another admin can reset you on the <strong>Users</strong> page. If you are the only admin, or the key is lost with no backup: cPanel &rarr; <strong>Terminal</strong> &rarr; type <code>cd msp-control-panel</code>, then <code>php scripts/reset-2fa.php you@example.com</code> (your sign-in email). It prints a new secret: add it to your authenticator app by hand and delete the old entry. Your password does not change.</li>
-    <li>Forgot your password and you are the only admin? Same Terminal, then <code>php scripts/reset-password.php you@example.com</code>. It asks for a new password; your 6-digit codes stay as they are.</li>
+    <li>Forgot your password? Use <strong>Forgot your password?</strong> on the sign-in page (you need your phone for the 6-digit code). If that link is not there (email not set up) and you are the only admin: same Terminal, then <code>php scripts/reset-password.php you@example.com</code>. It asks for a new password; your 6-digit codes stay as they are.</li>
 </ol>
 
 <h2 id="backups">13. Backups</h2>
@@ -290,7 +290,7 @@ view_head('Guide');
     <li><strong>Remove</strong>: they can no longer sign in, and are signed out at once. What they did stays in the audit log. You cannot remove yourself or the last admin.</li>
     <li><strong>Change your own password</strong>: <strong>My account</strong>. Other browsers signed in as you are signed out.</li>
 </ul>
-<p class="muted">Every add, reset and removal needs your own password and a new code, and is written in the audit log. There is no "forgot password" email: ask another admin, or see 12 F.</p>
+<p class="muted">Every add, reset and removal needs your own password and a new code, and is written in the audit log. A forgotten password can also be reset by the person themselves with <strong>Forgot your password?</strong> on the sign-in page; it still needs their 6-digit code, so a lost phone always needs a reset here (or 12 F).</p>
 
 <h2 id="data-protection">16. Data protection</h2>
 <p>What the panel does to keep your clients' data safe:</p>
