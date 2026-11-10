@@ -87,10 +87,12 @@ t_eq('unknown type becomes custom', 'custom', $c['business_type']);
 [$err, $c] = tenant_validate(base(['business_type' => 'full_hotel', 'modules' => array_keys(catalog_modules())]), true);
 t_eq('full hotel plus assistant ok', 'full_hotel', $c['business_type']);
 
-[$err] = tenant_validate(base(['name' => '', 'business_type' => 'custom']), true);
+[$err] = tenant_validate(base(['name' => '', 'business_type' => 'custom', 'modules' => ['bookings']]), true);
 t_ok('error says business, not hotel', count($err) === 1 && strpos($err[0], 'Business') === 0 && stripos($err[0], 'hotel') === false);
-[$err] = tenant_validate(base(['domain' => '', 'business_type' => 'custom']), true);
+[$err] = tenant_validate(base(['domain' => '', 'business_type' => 'custom', 'modules' => ['bookings']]), true);
 t_ok('domain error says business', count($err) === 1 && stripos($err[0], 'hotel') === false);
+[$err] = tenant_validate(base(['business_type' => 'custom', 'modules' => ['finance']]), true);
+t_ok('no module besides Finance is refused (the HMS would switch everything off)', count($err) === 1 && strpos($err[0], 'Tick at least one module') === 0);
 
 // Tenant row -> modules
 t_eq('null modules use preset', catalog_business_types()['supermarket'][1], catalog_tenant_modules(['business_type' => 'supermarket', 'modules' => null]));

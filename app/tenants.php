@@ -56,6 +56,10 @@ function tenant_validate(array $in, bool $isNew): array
     if ($clean['business_type'] !== 'custom' && !catalog_matches_preset($clean['business_type'], $clean['modules'])) {
         $clean['business_type'] = 'custom';
     }
+    // At least one module besides Finance (always on in the HMS): an empty list is never saved by a slip (2026-11-10).
+    if (array_values(array_diff($clean['modules'], ['finance'])) === []) {
+        $err[] = 'Tick at least one module besides Finance: the business\'s system switches off every module that is not ticked.';
+    }
     $clean['modules_json'] = json_encode($clean['modules']);
     if ($isNew && !preg_match('/^[a-z0-9][a-z0-9-]{1,62}$/', $clean['slug'])) {
         $err[] = 'Short name must be 2-63 characters: lowercase letters, numbers and hyphens.';

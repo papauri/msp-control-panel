@@ -4,6 +4,7 @@
 // The signed payload also carries backup_requested_at (2026-11-09): when the panel last asked this business to back up.
 // The signed payload also carries business_type and modules (licensed module keys) for the PMS to enforce,
 // and trial (bool) / trial_until (Y-m-d|null) for the free-trial wording on the PMS (BILLING.md Part 3).
+// It also carries staff_commands (staff changes queued on the panel) and staff_list_requested_at (2026-11-10, app/hms.php).
 // Response: {"payload": base64url(JSON), "sig": base64url(DER ECDSA P-256/SHA-256 over the JSON bytes)}
 
 require_once __DIR__ . '/../../app/bootstrap.php';
@@ -144,6 +145,13 @@ $payload = [
     'trial' => !empty($tenant['trial_until']) && empty($tenant['trial_converted_at']),
     'trial_until' => !empty($tenant['trial_until']) ? (string)$tenant['trial_until'] : null,
 ];
+// Staff changes queued on the panel (app/hms.php). A fault here never blocks the licence answer.
+try {
+    $doneId = isset($in['staff_done_id']) && is_int($in['staff_done_id']) ? max(0, $in['staff_done_id']) : 0;
+    $payload += hms_answer_fields($pdo, $tenant, $doneId);
+} catch (Throwable $e) {
+    error_log('licence staff commands: ' . $e->getMessage());
+}
 $token = signing_make_token($payload, $privateKey);
 if ($token === null) {
     error_log('licence: signing failed');

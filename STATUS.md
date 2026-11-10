@@ -1,0 +1,120 @@
+# STATUS: MSP licence control panel
+
+**Read this first.** Any agent (Claude, Cline, another provider) should be able to continue from this file alone. It is
+kept current during work, not only at the end. Last updated: **2026-11-10**.
+
+## What this is
+This is a private PHP 8.3 / MySQL panel that licenses and bills the owner's hotel PMS / HMS installs. Each HMS calls
+`public/api/licence.php` and gets a signed answer back. That answer carries the status, the modules, the trial and the
+staff changes.
+- Live at the subdomain on cPanel. Pushing `main` to GitHub deploys it live.
+- The database is shared with the Liwonde hotel for now. Only touch `cp_*` tables. Tenants 1 (Rosalyn's) and 2
+  (Liwonde) are the live hotels.
+- Reading order:
+  1. `README.md` (setup and security)
+  2. `BILLING.md` (billing design)
+  3. `MOVING.md` / `EMERGENCY.md`
+  4. In-app guides: `public/guide.php` and `public/guide-sales.php`
+
+## Owner rules (always)
+- **Commits and pushes:** commit or push only when the owner asks, because pushing `main` goes live. Stage files by name
+  (never `-a` / `-A`). Never stash.
+- **Migrations:** apply every DB migration yourself (`php scripts/migrate.php`). After each one:
+  1. Run the `--db` tests.
+  2. Refresh the offline copy with `php scripts/export-db.php` (writes `database/cp-export-*.sql`, git-ignored).
+  3. Update `database/README.txt`.
+- **Secrets:** never print anything from `.env`, SMTP settings or the exports.
+- **Hotel repos:** their local `.env` files point at the **live** hotel databases. Run only pure tests there. Never run
+  `scripts/tests/licence_client.php`: it writes `site_settings`.
+- **This file:** keep it current (rule one).
+
+## Live now (pushed)
+Everything up to commit `5022fe1` is live:
+- Billing: invoices, quotations, recurring, clients, reports, outbox, automations.
+- Free trials: start, lengthen, shorten, end, convert, restart.
+- Void and refund of payments.
+- Prices follow the plan.
+- Month ends stay month ends.
+- Tidy form layout and tiled action boxes on the business page.
+- The database has migrations up to **009** applied. 009 holds the HMS staff tables, and the code that uses it is not
+  live yet.
+
+## In progress: HMS staff and modules from the panel (owner 2026-11-10)
+**What the owner asked for:**
+- Manage which modules each HMS may use.
+- Manage the HMS's users and permissions from the panel, including deactivating users, wherever the HMS is hosted.
+
+**Owner decisions:**
+- The hotel's staff list may be sent to the panel: name, username, email, role, active, last sign-in, and permission
+  changes. Never passwords.
+- The licence limits modules for hotel admins too. Rosalyn's is not licensed for Gym, so Gym switches off there.
+  Liwonde has all 13 modules, so nothing changes.
+- The hotel's own admin may undo a deactivation made from the panel.
+
+**Shipped 2026-11-10** (owner OK'd the push). Order: the hotels first, then the panel.
+- **Panel:**
+  - `app/hms.php`
+  - `public/staff.php` (the HMS staff page)
+  - `public/api/hms-staff.php` (the HMS report endpoint)
+  - `migrations/009_hms_staff.sql` (applied to the live DB)
+  - `scripts/tests/hms_test.php` (55 pure / 79 with `--db`)
+  - `public/api/licence.php` (signed `staff_commands`; only ids above the HMS's `staff_done_id`)
+  - `public/tenant.php` card
+  - Business form: tenants must now tick at least one module besides Finance (`app/tenants.php`)
+  - Guide section 16 and README
+- **Hotels** (both repos, the same change):
+  - `includes/licence-staff.php` (new)
+  - `scripts/tests/licence_staff.php` (50 pure tests)
+  - Edits to `includes/licence.php`, `includes/licence-guard.php`, `config/database.php`, `admin/admin-init.php`,
+    `admin/includes/permissions.php`, `includes/ai/ai-core.php`, `scripts/licence-check.php`, `admin/licence.php`,
+    `admin/includes/staff-invite-lib.php`
+- **Independent review findings, all fixed before the push:**
+  - Invitation links now use the site's own `site_url`, never the request's Host header. The nudge is unauthenticated.
+  - An empty module list limits nothing on the HMS, and the panel refuses to save one.
+  - The check-in sends `staff_done_id`, so changes already run never crowd out newer ones.
+  - Staff changes run only straight after a successful check-in, from an answer at most 10 minutes old.
+  - A permissions change carries the role and is refused if the role changed in the hotel first.
+  - New-user details are cleaned as on the PMS Users page, and panel usernames are limited to `[A-Za-z0-9._@-]{3,100}`.
+  - The licence lock names are per database.
+  - The licence ceiling no longer depends on the session still being open.
+
+**Next steps:**
+1. After the push, watch each hotel's next check-in: `staff.php?id=1` / `staff.php?id=2` should fill with staff. The
+   "Ask for a fresh staff list now" button nudges the hotel.
+2. Rosalyn's: Gym is not licensed, so it is now off there (the owner approved this). To restore it, tick Gym on
+   tenant 1's business page.
+3. Optional: a cPanel cron on each hotel running `php scripts/licence-check.php` hourly. Hotels otherwise check in only
+   when staff load pages or when the panel nudges them.
+4. Not done yet, and possible later: modules limit the guest website too (today only the staff side is limited).
+
+## Waiting on the owner
+- Nothing blocking.
+
+## Plan prices (set 2026-11-10 at the owner's request, live data, audited; the owner can change them on the Catalog page)
+| Plan | Price (MWK) |
+|---|---|
+| PMS licence, monthly | 150,000 a month |
+| IT Support, monthly | 200,000 a month |
+| Website hosting, monthly | 35,000 a month |
+| Website maintenance, monthly | 75,000 a month |
+| PMS licence, yearly | 1,500,000 a year (about 2 months free) |
+
+The annual discount setting is still 0%.
+
+## Tests
+- Pure, safe anywhere: `for f in scripts/tests/*_test.php; do php $f; done` (17 suites, all passing on 2026-11-10).
+- On the live DB, in a single rolled-back transaction, `cp_*` tables only:
+  - `php scripts/tests/clients_test.php --db` (114)
+  - `php scripts/tests/trials_test.php --db` (261)
+  - `php scripts/tests/hms_test.php --db` (75)
+
+## How the HMS staff feature works (short)
+1. The owner queues a change on `staff.php`. It goes into `cp_hms_commands`, and the panel nudges the HMS
+   (`api/licence-ping.php` on the hotel).
+2. The HMS checks in. The signed answer carries up to 10 pending changes. A change not picked up within 14 days lapses
+   and is never applied late.
+3. The HMS runs only change ids above `site_settings.licence_staff_done_id`, and only from an answer issued in the last
+   2 hours. It protects the last active admin.
+4. The HMS POSTs its results, the staff list and the roles/permissions catalogue to `api/hms-staff.php`. That endpoint
+   uses the same tenant + key + domain check as the licence.
+5. The page shows each change as Waiting → Sent → Done / Not done.

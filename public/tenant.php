@@ -531,6 +531,23 @@ if ($tenant) {
     }
     echo '</section>';
 
+    // HMS staff (owner 2026-11-10): who can sign in to this business's HMS, managed from the panel (public/staff.php).
+    $hmsWaiting = 0;
+    $hmsStaff = 0;
+    try {
+        $q = $pdo->prepare('SELECT (SELECT COUNT(*) FROM cp_hms_commands WHERE tenant_id = ? AND done_at IS NULL), (SELECT COUNT(*) FROM cp_hms_staff WHERE tenant_id = ? AND is_active = 1)');
+        $q->execute([$tid0, $tid0]);
+        [$hmsWaiting, $hmsStaff] = array_map('intval', $q->fetch(PDO::FETCH_NUM));
+    } catch (Throwable $e) {
+        error_log('tenant hms counts: ' . $e->getMessage());
+    }
+    echo '<section class="card" id="hms-staff"><h2>HMS staff and permissions</h2>'
+        . '<p class="muted">Add staff, change their role or permissions, or deactivate someone in this business\'s HMS, wherever it is hosted. '
+        . 'Each change travels in its next signed licence answer. Modules are set under Details below; the HMS switches off any module not ticked there, for its administrators too.</p>'
+        . '<p>' . (!empty($tenant['hms_synced_at']) ? e($hmsStaff . ' active staff') . ' &middot; list from ' . e(billing_date(substr((string)$tenant['hms_synced_at'], 0, 10))) : 'No staff list received yet')
+        . ($hmsWaiting > 0 ? ' &middot; <strong>' . e($hmsWaiting . ' change' . ($hmsWaiting === 1 ? '' : 's') . ' waiting') . '</strong>' : '') . '</p>'
+        . '<p><a class="button secondary" href="staff.php?id=' . $tid0 . '">Manage HMS staff</a></p></section>';
+
     // Go-live introduction email (owner 2026-11-09): sent by hand when the business is ready to go live.
     echo '<section class="card" id="golive"><h2>Introduction email</h2>'
         . '<p class="muted">When this business is ready to go live, send them an email that introduces the system: what is included, '

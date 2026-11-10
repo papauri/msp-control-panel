@@ -220,3 +220,10 @@ td details[open] { min-width: min(26rem, 80vw); }
 form.tool > .tool-fields:not(.bill-grid) { max-width: 30rem; }
 form.tool > .tool-fields.pair { display: grid; grid-template-columns: 1fr 1fr; column-gap: .75rem; align-items: end; }
 form.tool > .tool-fields.pair > label { margin-bottom: .9rem; }
+
+/* HMS staff permissions (2026-11-10): one box per category; a gold edge marks a permission that differs from the role's usual set. */
+form.tool > .tool-fields.perm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .75rem 1rem; align-items: start; max-width: none; margin-bottom: .9rem; }
+.perm-grid fieldset { min-width: 0; margin: 0; padding: .4rem .75rem .6rem; background: #fff; border: 1px solid #e1e5ea; border-radius: 4px; }
+.perm-grid legend { padding: 0 .25rem; font-size: .9rem; font-weight: 600; }
+.perm-grid label.check { font-size: .9rem; }
+.perm-changed { box-shadow: inset 3px 0 0 #b7791f; padding-left: .45rem; }

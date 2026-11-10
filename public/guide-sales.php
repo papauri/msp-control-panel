@@ -148,7 +148,7 @@ view_head('Sales and billing guide');
     <li>The panel keeps what billing needs: client names, contacts, addresses, what you sold them and what they paid. Nothing else.</li>
     <li>Every invoice, payment, email, export and change is in the audit log with who did it.</li>
     <li>Excel exports and PDFs hold client details: keep them on your own computer, not in shared folders or chats.</li>
-    <li>Main guide, section 16 lists what the law asks of you (agreement with each client, how long you keep records, what to do if data is lost).</li>
+    <li>Main guide, section 17 lists what the law asks of you (agreement with each client, how long you keep records, what to do if data is lost).</li>
 </ul>
 <?php
 view_foot();

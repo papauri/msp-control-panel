@@ -108,6 +108,7 @@ view_head('Guide');
     <li>Room Service Station</li>
     <li>Assistant</li>
 </ul>
+<p><strong>The ticks are what the business can use.</strong> A module left unticked is switched off in its system for every staff member, administrators included, within a minute of saving (or at its next check-in). Finance &amp; Payments always stays on: the accounts depend on it. The hotel can still switch a ticked module off for itself; it can never switch an unticked one on. The guest website is not affected.</p>
 
 <h2>6. Record a payment</h2>
 <ol>
@@ -292,10 +293,23 @@ view_head('Guide');
 </ul>
 <p class="muted">Every add, reset and removal needs your own password and a new code, and is written in the audit log. A forgotten password can also be reset by the person themselves with <strong>Forgot your password?</strong> on the sign-in page; it still needs their 6-digit code, so a lost phone always needs a reset here (or 12 F).</p>
 
-<h2 id="data-protection">16. Data protection</h2>
+<h2 id="hms-staff">16. Staff in a business's system (HMS)</h2>
+<p>From a business page, <strong>Manage HMS staff</strong> shows who can sign in to that business's system, and lets you:</p>
+<ul>
+    <li><strong>Add a staff member</strong>: name, username, email and role. Their system emails them its own invitation link to choose a password. No password is set or sent from here.</li>
+    <li><strong>Deactivate</strong> someone: they are signed out on their next click and cannot sign in. Nothing they did is deleted. <strong>Reactivate</strong> brings them back with their own password.</li>
+    <li>Change their <strong>role</strong>. Their permissions go back to that role's usual set.</li>
+    <li>Change their <strong>permissions</strong>: tick what they may do. A gold edge marks a box that differs from their role's usual set.</li>
+    <li><strong>Send an invitation</strong> again, for example when someone lost the first email.</li>
+</ul>
+<p>How it works, wherever the business is hosted: this panel never logs into their server. Each change waits here and goes out in that system's next signed licence answer. The panel asks the system to check in straight away, so it usually lands within a minute. Then the system makes the change and confirms it, and the change shows as <strong>Done</strong> under Changes. If it shows <em>Waiting</em> for long, nobody has used that system and it could not be reached; it lands at its next check-in. A change not picked up in 14 days lapses and is never applied late.</p>
+<p>Safety rules the system always keeps: the last active administrator can never be deactivated or lowered; administrators always have every permission; the hotel's own administrator can undo any change on their Users page. Every change is written to the hotel's activity log as made by the system provider, and to this panel's audit log.</p>
+<p class="muted">What the system sends here: each person's name, username, email, role, whether they are active, their last sign-in and their permission changes. Never a password, and nothing about guests, bookings or money.</p>
+
+<h2 id="data-protection">17. Data protection</h2>
 <p>What the panel does to keep your clients' data safe:</p>
 <ul>
-    <li><strong>Data stays with each client.</strong> Backups are made and kept on each business's own server. This panel only holds the facts needed to run the licence: business name, website address, plan, payments, and the dates and sizes of their backups.</li>
+    <li><strong>Data stays with each client.</strong> Backups are made and kept on each business's own server. This panel only holds the facts needed to run the licence: business name, website address, plan, payments, the dates and sizes of their backups, and their staff list (name, username, email, role, active, last sign-in; never a password).</li>
     <li><strong>Encrypted where it is stored.</strong> The panel's own backups and your 6-digit-code secrets are encrypted with the signing key. Passwords and licence keys are stored only as one-way hashes.</li>
     <li><strong>Only named people get in</strong>, each with a password and a code from their own phone. Downloads of any backup need the password and a new code again.</li>
     <li><strong>Everything is recorded</strong> in the audit log: sign-ins, users added or removed, every backup run and every download.</li>

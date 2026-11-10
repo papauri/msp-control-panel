@@ -39,6 +39,7 @@ require_once __DIR__ . '/users.php';
 require_once __DIR__ . '/pwreset.php';
 require_once __DIR__ . '/billing.php';
 require_once __DIR__ . '/automation.php';
+require_once __DIR__ . '/hms.php';
 require_once __DIR__ . '/view.php';
 
 function is_https(): bool

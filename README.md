@@ -43,8 +43,13 @@ The PMS is sold to hotels, bars and restaurants, conference venues, gyms, shops 
 
 - Choosing a type on the customer page ticks that type's usual modules. Changing a box by hand switches the type to Custom. The Assistant add-on can be added to any type.
 - Customers saved before this existed have no module list stored; the panel treats that as the full set for their type (Full Hotel by default).
-- Both values are signed into the licence token (`business_type` string, `modules` array of keys; token version stays 1). `client/licence-verify.php` returns them as `business_type` and `modules` (both null when an older token carries none). Enforcement in the PMS is separate.
+- Both values are signed into the licence token (`business_type` string, `modules` array of keys; token version stays 1). `client/licence-verify.php` returns them as `business_type` and `modules` (both null when an older token carries none).
+- Enforced in the PMS since 2026-11-10 (`includes/licence.php` `rh_licence_module_allowed`, used by `moduleEnabled()`): for signed-in staff an unlisted module is off, administrators included; `finance` always on; no list = nothing limited; guest website and cron never limited.
 - `php scripts/migrate.php` records applied files in `cp_schema_migrations` and skips them on re-run.
+
+## HMS staff and permissions (2026-11-10)
+
+`app/hms.php`, `public/staff.php`, `public/api/hms-staff.php`, migration 009. The panel never reaches into a hotel: a change (deactivate, activate, role, permissions, create, invite) is queued in `cp_hms_commands`, added to the next **signed** licence answer as `staff_commands` (oldest 10 not yet done; lapses after 14 days), applied by the PMS (`includes/licence-staff.php`: only ids above its last one run, only from an answer issued in the last 2 hours, last active admin protected, hotel admin can undo), and confirmed by the PMS's report to `api/hms-staff.php` (same tenant + key + domain check as the licence; up to 512 KB) carrying results, the staff list (`cp_hms_staff`; no passwords) and the roles/permissions catalogue (`cp_tenants.hms_catalog`). The page nudges the PMS after each change. A deactivated user is signed out on their next request (PMS `rh_staff_session_guard`). Tests: `php scripts/tests/hms_test.php [--db]`.
 
 ## PMS side
 
