@@ -4,7 +4,8 @@
 //           "results": [{"id": int, "ok": bool, "message": str}]           what happened to each change the panel sent,
 //           "staff": [{"id", "username", "email", "full_name", "role", "is_active", "last_login", "grants": [], "denies": []}],
 //           "catalog": {"roles": [{"key", "label", "level", "defaults": [..]|null}], "permissions": [{"key", "label", "category"}]}}
-// "staff" and "catalog" may be left out when only results are sent. Never a password.
+//           "ai": {"ready", "enabled", "off_reason", "provider", "key_last4", "key_status", "models": [{"model_id", "role"}], "budget_usd", "usage": {...}}
+// "staff", "catalog" and "ai" may be left out when only results are sent. Never a password, never an AI key.
 // Response: {"ok": true, "acked": [command ids recorded]}. Nothing in the answer is an instruction: instructions only ever
 // travel in the SIGNED licence answer.
 
@@ -60,6 +61,11 @@ $results = hms_clean_results($in['results'] ?? []);
 $staff = array_key_exists('staff', $in) && is_array($in['staff']) ? hms_clean_staff($in['staff']) : null;
 $catalog = array_key_exists('catalog', $in) ? hms_clean_catalog($in['catalog']) : null;
 $acked = hms_store_report($pdo, (int)$tenant['id'], $results, $staff, $catalog);
+// The hotel's Assistant (2026-11-11, app/ai.php): provider, last 4 of the key, models, on/off, this month's usage. Never a key.
+$aiState = array_key_exists('ai', $in) ? ai_clean_state($in['ai']) : null;
+if ($aiState !== null) {
+    ai_store_state($pdo, (int)$tenant['id'], $aiState);
+}
 if ($results) {
     audit_log($pdo, null, 'hms_changes_confirmed', (int)$tenant['id'], null, ['results' => array_map(
         static fn($r) => $r['id'] . ':' . ($r['ok'] ? 'ok' : 'failed'), $results)]);

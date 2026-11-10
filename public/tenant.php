@@ -568,6 +568,22 @@ if ($tenant) {
         . ($hmsWaiting > 0 ? ' &middot; <strong>' . e($hmsWaiting . ' change' . ($hmsWaiting === 1 ? '' : 's') . ' waiting') . '</strong>' : '') . '</p>'
         . '<p><a class="button secondary" href="staff.php?id=' . $tid0 . '">Manage HMS staff</a></p></section>';
 
+    // The Assistant (AI) package (owner 2026-11-11): key, models, test and send to the hotel (public/ai.php, app/ai.php).
+    $aiCfg = null;
+    try {
+        $aiCfg = ai_config($pdo, $tid0);
+    } catch (Throwable $e) {
+        error_log('tenant ai card: ' . $e->getMessage()); // before migration 013
+    }
+    $aiState = ai_state($aiCfg);
+    echo '<section class="card" id="ai"><h2>Assistant (AI)</h2>'
+        . '<p class="muted">The Assistant package: the add-on in the licence, the AI provider key and models (tested here before they are sent), and this month\'s usage. '
+        . 'The hotel\'s administrators may still change it in their own Assistant Settings.</p>'
+        . '<p>' . (ai_licensed($tenant) ? 'Add-on in the licence' : 'Add-on not in the licence')
+        . ($aiCfg && !empty($aiCfg['key_last4']) ? ' &middot; ' . e(ai_provider_label((string)$aiCfg['provider'])) . ' key ' . e("\u{2022}\u{2022}\u{2022}\u{2022}" . $aiCfg['key_last4']) : '')
+        . ($aiState !== null ? ' &middot; at the hotel: ' . ($aiState['enabled'] ? 'on' : 'off') : '') . '</p>'
+        . '<p><a class="button secondary" href="ai.php?id=' . $tid0 . '">Manage the Assistant</a></p></section>';
+
     // Go-live introduction email (owner 2026-11-09): sent by hand when the business is ready to go live.
     echo '<section class="card" id="golive"><h2>Introduction email</h2>'
         . '<p class="muted">When this business is ready to go live, send them an email that introduces the system: what is included, '

@@ -5,6 +5,8 @@
 // The signed payload also carries business_type and modules (licensed module keys) for the PMS to enforce,
 // and trial (bool) / trial_until (Y-m-d|null) for the free-trial wording on the PMS (BILLING.md Part 3).
 // It also carries staff_commands (staff changes queued on the panel) and staff_list_requested_at (2026-11-10, app/hms.php).
+// One kind of staff command, ai_setup (2026-11-11, app/ai.php), sets up the hotel's Assistant; its AI key is encrypted under this
+// business's own licence key, so the stored answer never holds it readable.
 // Response: {"payload": base64url(JSON), "sig": base64url(DER ECDSA P-256/SHA-256 over the JSON bytes)}
 
 require_once __DIR__ . '/../../app/bootstrap.php';
@@ -153,7 +155,7 @@ try {
     if (isset($in['staff_error']) && is_string($in['staff_error'])) {
         hms_store_error($pdo, $tenant, $in['staff_error']);
     }
-    $payload += hms_answer_fields($pdo, $tenant, $doneId);
+    $payload += hms_answer_fields($pdo, $tenant, $doneId, $keyIn); // $keyIn: verified above; protects an Assistant set-up's AI key
 } catch (Throwable $e) {
     error_log('licence staff commands: ' . $e->getMessage());
 }

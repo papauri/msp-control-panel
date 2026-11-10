@@ -429,6 +429,9 @@ function hms_cancel(PDO $pdo, int $tenantId, int $commandId, ?int $adminId): boo
     if ($st->rowCount() !== 1) {
         return false;
     }
+    if (function_exists('ai_wipe_finished')) {
+        ai_wipe_finished($pdo, $tenantId);
+    }
     audit_log($pdo, $adminId, 'hms_change_cancelled', $tenantId, null, ['command' => $commandId]);
     return true;
 }
@@ -444,24 +447,50 @@ function hms_request_list(PDO $pdo, int $tenantId, ?int $adminId): void
  * and when the owner last asked for a fresh staff list. Changes older than HMS_COMMAND_DAYS lapse first.
  * $doneId: the last change the HMS says it ran (staff_done_id in its check-in). Only newer ones are sent, so changes it ran
  * but could not confirm yet never crowd out new ones. Ones it ran stay "sent" until its report confirms them.
+ * $licenceKey: the business's licence key from this check-in (already verified). An Assistant set-up (kind ai_setup,
+ * app/ai.php) carries the AI provider key encrypted under it, so it is sent only when it is given.
  * @return array{staff_commands:array,staff_list_requested_at:int}
  */
-function hms_answer_fields(PDO $pdo, array $tenant, int $doneId = 0): array
+function hms_answer_fields(PDO $pdo, array $tenant, int $doneId = 0, string $licenceKey = ''): array
 {
     $tid = (int)$tenant['id'];
     $pdo->prepare("UPDATE cp_hms_commands SET done_at = NOW(), result = 'lapsed' WHERE tenant_id = ? AND done_at IS NULL AND sent_at IS NULL AND created_at < NOW() - INTERVAL " . HMS_COMMAND_DAYS . ' DAY')
         ->execute([$tid]);
     $pdo->prepare("UPDATE cp_hms_commands SET done_at = NOW(), result = 'lapsed' WHERE tenant_id = ? AND done_at IS NULL AND id > ? AND created_at < NOW() - INTERVAL " . HMS_COMMAND_DAYS . ' DAY')
         ->execute([$tid, max(0, $doneId)]);
+    if (function_exists('ai_wipe_finished')) {
+        ai_wipe_finished($pdo, $tid); // a lapsed Assistant set-up keeps no key
+    }
     $st = $pdo->prepare('SELECT * FROM cp_hms_commands WHERE tenant_id = ? AND done_at IS NULL AND id > ? ORDER BY id LIMIT ' . HMS_MAX_IN_ANSWER);
     $st->execute([$tid, max(0, $doneId)]);
-    $cmds = $st->fetchAll();
+    $cmds = [];
+    $payloads = [];
+    foreach ($st->fetchAll() as $c) {
+        if ((string)$c['kind'] !== 'ai_setup') {
+            $cmds[] = $c;
+            $payloads[] = hms_command_payload($c);
+            continue;
+        }
+        // The Assistant set-up (app/ai.php): its provider key is encrypted for this business with the licence key it just sent.
+        if ($licenceKey === '' || !function_exists('ai_command_payload')) {
+            continue;
+        }
+        $p = ai_command_payload($c, $licenceKey, (string)$tenant['slug'], ai_box_key());
+        if ($p === null) {
+            $pdo->prepare("UPDATE cp_hms_commands SET done_at = NOW(), result = 'failed', result_message = ? WHERE id = ? AND done_at IS NULL")
+                ->execute(['The panel could not read the saved key (was the signing key replaced?). Paste the key again, test and send.', (int)$c['id']]);
+            ai_wipe_finished($pdo, $tid);
+            continue;
+        }
+        $cmds[] = $c;
+        $payloads[] = $p;
+    }
     if ($cmds) {
         $ids = array_map(static fn($c) => (int)$c['id'], $cmds);
         $pdo->prepare('UPDATE cp_hms_commands SET sent_at = NOW() WHERE sent_at IS NULL AND id IN (' . implode(',', $ids) . ')')->execute();
     }
     $ask = !empty($tenant['hms_list_requested_at']) ? (int)strtotime((string)$tenant['hms_list_requested_at']) : 0;
-    return ['staff_commands' => array_map('hms_command_payload', $cmds), 'staff_list_requested_at' => max(0, $ask)];
+    return ['staff_commands' => $payloads, 'staff_list_requested_at' => max(0, $ask)];
 }
 
 /**
@@ -497,6 +526,9 @@ function hms_store_report(PDO $pdo, int $tenantId, array $results, ?array $staff
             }
             $pdo->prepare('UPDATE cp_tenants SET hms_synced_at = NOW()' . ($catalog !== null ? ', hms_catalog = ?' : '') . ' WHERE id = ?')
                 ->execute($catalog !== null ? [json_encode($catalog, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $tenantId] : [$tenantId]);
+        }
+        if ($results && function_exists('ai_wipe_finished')) {
+            ai_wipe_finished($pdo, $tenantId); // a finished Assistant set-up keeps no key
         }
         if ($own) {
             $pdo->commit();

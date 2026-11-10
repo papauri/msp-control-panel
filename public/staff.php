@@ -72,7 +72,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     staff_back($tid, $back);
 }
 
-$commands = hms_commands($pdo, $tid, 40);
+// The Assistant set-up (kind ai_setup) shares the queue but is shown on its own page (public/ai.php).
+$commands = array_values(array_filter(hms_commands($pdo, $tid, 40), static fn($c) => (string)$c['kind'] !== AI_KIND));
 $waiting = array_values(array_filter($commands, static fn($c) => $c['done_at'] === null));
 $lastCheck = hms_last_check($pdo, $tid);
 $userId = isset($_GET['user']) && ctype_digit((string)$_GET['user']) ? (int)$_GET['user'] : 0;

@@ -307,6 +307,18 @@ view_head('Guide');
 <p><strong>Super Admin.</strong> A hotel can have a super admin: its top administrator, who can switch permissions off for the other administrators. The staff list marks them <strong>Super Admin</strong>. Nothing about a super admin can be changed from here (not deactivate, reactivate, role, permissions or invitation): only another super admin can, on the hotel's Users page. An administrator whose super admin switched some permissions off is marked <strong>Limited</strong>, and their page lists what is off. You can still deactivate, reactivate or invite them, but only a super admin can change their role. No administrator's permissions are set from here.</p>
 <p class="muted">What the system sends here: each person's name, username, email, role, whether they are active, their last sign-in, their permission changes and whether they are the super admin. Never a password, and nothing about guests, bookings or money.</p>
 
+<h2 id="assistant">16b. The Assistant (AI) for a business</h2>
+<p>The Assistant comes as a package with the system. From a business page, <strong>Manage the Assistant</strong> lets you:</p>
+<ul>
+    <li><strong>Start or stop the add-on.</strong> This is the "Assistant (add-on)" module in the business's licence. Stop it and the hotel switches the Assistant off at its next check-in (its chats and settings are kept).</li>
+    <li><strong>Package</strong>: the plan you bill (from the Catalog; bill it with a recurring invoice), who pays the AI company (you, as part of the package, or the business with its own key), and the <strong>monthly aim</strong> in US dollars (shown to the hotel as a target, never a hard stop).</li>
+    <li><strong>Provider key and models</strong>: choose the AI company, paste the key and click <strong>Save and test</strong>. The panel lists the models that key may use; choose a <strong>Primary</strong> model (and, if you like, a <strong>Fast</strong> and a <strong>Fallback</strong> one, each a different model) and click <strong>Save and test</strong> again. The panel sends each chosen model one short test message (a fraction of a cent) and shows what each answered.</li>
+    <li><strong>Send to the hotel</strong>: only a set-up that passed its test in the last day can be sent, and only exactly what was tested. Tick <strong>Switch the Assistant on</strong> to turn it on there too.</li>
+</ul>
+<p>How it reaches the hotel: like a staff change, in the hotel's next signed licence answer (the panel asks it to check in straight away). The key travels encrypted for that one hotel. The hotel <strong>tests the key again itself</strong> first; if that fails, it changes nothing and the reason shows under <strong>Sent</strong>. Otherwise it saves the key encrypted, chooses the models, sets the monthly aim, and shows <strong>Done</strong>.</p>
+<p><strong>The hotel's administrators can still change it</strong> in their own Assistant Settings (another key, other models, switch it off). Nothing here changes it back unless you send a set-up again. <strong>At the hotel now</strong> shows what the hotel really uses, this month's usage, and a list of anything that differs from what you sent.</p>
+<p class="muted">The key is stored sealed on the panel (only its last 4 characters show) and is wiped from the sent set-up as soon as the hotel has answered. It is never shown, emailed or written to the audit log. What the hotel sends back: whether the Assistant is on, the provider, the key's last 4 characters, the models, the monthly aim and this month's questions, tokens and estimated cost. Never the key, and nothing about guests, bookings or money.</p>
+
 <h2 id="data-protection">17. Data protection</h2>
 <p>What the panel does to keep your clients' data safe:</p>
 <ul>

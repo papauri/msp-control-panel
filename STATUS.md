@@ -140,7 +140,46 @@ is super admin at both. The hotels shipped the Super Admin
 - **Order:** apply 012 (then the `--db` tests and a fresh export), then push the panel. The hotels can go at any time:
   the panel live today ignores the new `super_admin` field.
 
+## Shipped: the Assistant (AI) package from the panel (owner 2026-11-11)
+**Owner asked:** manage each business's AI model and subscription from the panel (the Assistant comes as a package with
+the HMS): enter their AI provider key and test it from the panel BEFORE sending it to the hotel. The hotel's own admins
+may still override it afterwards (Assistant Settings in the HMS).
+
+**Panel:**
+- `migrations/013_ai_config.sql`: `cp_ai_config`, one row per business. **Applied to the live DB 2026-11-11** (additive;
+  the live code ignores it). `--db` tests after it: ai 102/0, hms 107/0, clients 114/0, trials 270/0. Export refreshed
+  (`database/cp-export-20261110-203633.sql`, laptop clock) and `database/README.txt` updated.
+- `app/ai.php` (new; loaded by `app/bootstrap.php`): providers, key sealed at rest (`keys_derive('cp-ai-v1')`), the
+  panel's own test (lists models, pings every chosen model; injectable transport), deploy rules, the hotel's report.
+- `public/ai.php` (new page "Assistant (AI)"): Subscription (add-on in the licence on/off = the `ai_assistant` module;
+  plan from the Catalog; who pays the provider; monthly aim US$; this month's usage from the hotel), Provider key and
+  models (Save and test), Send to the hotel (only when the last test passed in the last 24 h for exactly this
+  provider + key + models; optional "switch it on", which needs the add-on), At the hotel now (and what differs).
+- `app/hms.php`: `hms_answer_fields(..., $licenceKey)` sends an `ai_setup` command with the AI key re-encrypted for that
+  business (AES-256-GCM under `hash_hkdf` of the licence key it just sent, bound to the command id); a key the panel
+  cannot open marks it failed; the sealed key is wiped from finished commands (`ai_wipe_finished`).
+- `public/api/licence.php` passes `$keyIn`; `public/api/hms-staff.php` stores the report's `ai` block;
+  `public/staff.php` hides `ai_setup` rows; `public/tenant.php` "Assistant (AI)" card; guide section 16b; README.
+- `scripts/tests/ai_test.php`: 72 pure / 102 with `--db` (no network: fake provider).
+- No catalog plan was created: the owner sets the price. Add an "Assistant add-on, monthly" item on the Catalog page,
+  then choose it under Package and bill it with a recurring invoice.
+
+**Hotels (both, identical; Liwonde `da9f64c`, Rosalyn's `bb323de`):** `includes/licence-ai.php` (new), `scripts/tests/licence_ai.php` (new, 30 pure;
+shares a fixed encryption vector with the panel's test), `includes/licence-staff.php` (kind `ai_setup`; the report
+carries `ai`). The hotel tests the key and every chosen model itself and changes NOTHING if that fails; then saves the
+key the Assistant's usual way (`rh_ai_store_key`, needs `APP_ENCRYPTION_SALT`), refreshes models, sets the roles, the
+monthly aim and (if asked) switches the Assistant on. No hotel schema change.
+
+**Shipped with the owner's OK on 2026-11-11:** both hotels pushed first, then the panel (an old hotel would ignore an
+`ai_setup` and leave it "Sent" until it lapses, so the hotels went first). All 18 pure panel suites pass. NOT yet run
+against a real provider or a live hotel: the first real send is that test.
+
+**First real use (owner):** on the live panel open a business > Manage the Assistant, paste the key, Save and test, choose the
+models, Save and test, Send. Watch "Sent" turn Done and "At the hotel now" fill in.
+
 ## Waiting on the owner
+- The Assistant (AI): add a catalog plan for the add-on (price is the owner's call), then do the first real send
+  (business > Manage the Assistant) and check "Sent" turns Done and "At the hotel now" fills in.
 - Super Admin on the panel: look at the staff page after the hotels' next check-in.
 
 ## Plan prices (set 2026-11-10 at the owner's request, live data, audited; the owner can change them on the Catalog page)
@@ -155,11 +194,12 @@ is super admin at both. The hotels shipped the Super Admin
 The annual discount setting is still 0%.
 
 ## Tests
-- Pure, safe anywhere: `for f in scripts/tests/*_test.php; do php $f; done` (17 suites, all passing on 2026-11-10).
+- Pure, safe anywhere: `for f in scripts/tests/*_test.php; do php $f; done` (18 suites, all passing on 2026-11-11).
 - On the live DB, in a single rolled-back transaction, `cp_*` tables only:
   - `php scripts/tests/clients_test.php --db` (114)
-  - `php scripts/tests/trials_test.php --db` (261)
-  - `php scripts/tests/hms_test.php --db` (75)
+  - `php scripts/tests/trials_test.php --db` (270)
+  - `php scripts/tests/hms_test.php --db` (107)
+  - `php scripts/tests/ai_test.php --db` (101; never calls a real AI provider)
 
 ## How the HMS staff feature works (short)
 1. The owner queues a change on `staff.php`. It goes into `cp_hms_commands`, and the panel nudges the HMS
