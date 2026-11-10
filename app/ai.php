@@ -16,6 +16,9 @@
 //   - the sealed copy is wiped from the command as soon as the command is finished (done, refused, cancelled or lapsed);
 //   - it is never logged, audited, shown or sent anywhere else. Provider error texts are scrubbed of anything key-shaped.
 //
+// The newest models, always (owner 2026-11-11): every Save and test fills empty roles with the provider's newest suitable
+// models and moves each chosen model to the newest of its family, then tests that. See "pure: the newest models" below.
+//
 // Provider calls are ported from the hotel's includes/ai/ai-providers.php (same five providers, same headers, same test).
 // The HTTP layer is injectable (ai_set_transport) so the tests never touch the network.
 
@@ -164,6 +167,10 @@ function ai_clean_models(array $in, ?array $listedIds): array
         $v = isset($in[$r]) && is_string($in[$r]) ? trim($in[$r]) : '';
         if ($v !== '' && !preg_match('/^[A-Za-z0-9._:\/@-]{1,120}$/D', $v)) {
             $err = 'A model name has characters no provider uses.';
+            $v = '';
+        }
+        if ($v !== '' && ai_model_banned($v)) {
+            $err = 'Gemini 4 models are not used by the Assistant (owner rule). Choose a Gemini 3 model.';
             $v = '';
         }
         if ($v !== '' && $listedIds !== null && !in_array($v, $listedIds, true)) {
@@ -470,7 +477,7 @@ function ai_normalise_models(string $provider, array $json): array
             }
             $id = (string)preg_replace('#^models/#', '', (string)($m['name'] ?? ''));
             if ($id !== '' && ai_is_chat_model($id)) {
-                $out[] = ['model_id' => $id, 'label' => (string)($m['displayName'] ?? $id)];
+                $out[] = ['model_id' => $id, 'label' => (string)($m['displayName'] ?? $id)]; // Google lists no dates
             }
         }
         return $out;
@@ -478,10 +485,258 @@ function ai_normalise_models(string $provider, array $json): array
     foreach ((array)($json['data'] ?? []) as $m) {
         $id = is_array($m) ? (string)($m['id'] ?? '') : '';
         if ($id !== '' && ai_is_chat_model($id)) {
-            $out[] = ['model_id' => $id, 'label' => $provider === 'anthropic' ? (string)($m['display_name'] ?? $id) : $id];
+            $row = ['model_id' => $id, 'label' => $provider === 'anthropic' ? (string)($m['display_name'] ?? $id) : $id];
+            $created = ai_model_created($m['created_at'] ?? $m['created'] ?? null); // Anthropic: ISO date; OpenAI, xAI: Unix time
+            if ($created !== '') {
+                $row['created'] = $created;
+            }
+            $out[] = $row;
         }
     }
     return $out;
+}
+
+/** A provider's "created" value as Y-m-d ('' when missing or unreadable). */
+function ai_model_created($v): string
+{
+    if (is_int($v) || (is_string($v) && ctype_digit($v))) {
+        $t = (int)$v;
+        return $t > 946684800 && $t < 4102444800 ? gmdate('Y-m-d', $t) : '';
+    }
+    if (is_string($v) && preg_match('/^(\d{4}-\d{2}-\d{2})/', $v, $m)) {
+        return $m[1];
+    }
+    return '';
+}
+
+// ---------------------------------------------------------------------------------------------------- pure: the newest models
+//
+// Owner 2026-11-11: "Always pick up the most latest models for the providers." Every Save and test lists the provider's
+// models with the key, then:
+//   - no Primary chosen yet: Primary, Fast and Fallback are filled with the newest suitable models;
+//   - otherwise each chosen model moves to the newest model of its family (claude-sonnet-5 -> claude-sonnet-5-5,
+//     gpt-4.1 -> gpt-5.1, gemini-3.6-flash -> gemini-3.8-flash), never across sizes (a Fast model stays a small one);
+// and the test then pings what was picked (a picked model the provider refuses is replaced by the next newest). Sending needs
+// a passed test under 24 hours old, so every set-up sent carries the newest models.
+// Older owner rules still hold (2026-10-28, the hotel's own rules): never a Gemini 4 model (not even listed), and never a
+// big model for chat (Opus, Fable, Argon, Pro, Ultra, or US$15+ per million tokens out) unless the provider offers nothing
+// else. Providers do not list prices, so "big by price" uses the price list the hotels ship with (AI_HOTEL_PRICES); a
+// newer version of a family that is big by price counts as big too.
+// Previews, experiments, "-latest" aliases and special-purpose models (code, search, research, computer use, vision,
+// open-weight, instruct, the o-series reasoners) stay in the list to choose by hand but are never picked automatically:
+// they change or close without notice. "Newest" = the highest version in the name, then the newest date the provider
+// gives, then a plain name before a reasoning variant or a dated snapshot of it.
+
+/**
+ * The prices (US$ per million tokens in, out) of includes/ai/model-catalog.json in both hotels (updated 2026-10-28). A model
+ * that is not here reaches the hotel with no price: the hotel uses it but counts its cost as US$0 until someone types the
+ * price in its Assistant Settings > Models. scripts/tests/ai_test.php checks this against the hotels' file when it is there.
+ */
+const AI_HOTEL_PRICES = [
+    'anthropic' => ['claude-fable-5-1' => [10.0, 50.0], 'claude-opus-5-5' => [4.0, 20.0], 'claude-sonnet-5-5' => [2.0, 10.0], 'claude-haiku-5-5' => [0.1, 0.5],
+        'claude-opus-5' => [5.0, 25.0], 'claude-sonnet-5' => [2.0, 10.0], 'claude-haiku-4-5' => [1.0, 5.0]],
+    'openai' => ['gpt-5' => [1.25, 10.0], 'gpt-5-mini' => [0.25, 2.0], 'gpt-5-nano' => [0.05, 0.4], 'gpt-4.1' => [2.0, 8.0], 'gpt-4o-mini' => [0.15, 0.6]],
+    'google' => ['gemini-4-argon' => [2.0, 10.0], 'gemini-3.1-pro-preview' => [2.0, 12.0], 'gemini-3.8-flash' => [0.75, 3.75], 'gemini-3.6-flash' => [0.75, 3.75],
+        'gemini-3.5-flash-lite' => [0.3, 2.5], 'gemini-3.1-flash-lite' => [0.25, 1.5]],
+    'xai' => ['grok-4' => [3.0, 15.0], 'grok-3-mini' => [0.3, 0.5]],
+    'deepseek' => ['deepseek-reasoner' => [0.28, 0.42], 'deepseek-chat' => [0.28, 0.42]],
+];
+
+/** A Gemini 4 model: never used by the Assistant (owner 2026-10-28, the hotel's rh_ai_model_banned). */
+function ai_model_banned(string $id): bool
+{
+    return (bool)preg_match('#(^|/)gemini-?4#i', trim($id));
+}
+
+/** Id without a trailing date stamp ("claude-haiku-4-5-20251001" -> "claude-haiku-4-5"), as the hotel matches its catalog. */
+function ai_model_base_id(string $id): string
+{
+    return (string)preg_replace('/-(\d{8}|\d{4}-\d{2}-\d{2})$/', '', strtolower($id));
+}
+
+/**
+ * Family: the id without dates, versions and preview words ("gemini-2.5-flash" -> "gemini-flash"); the hotel's rule, plus
+ * OpenAI's "4o" counted as a version ("gpt-4o-mini" and "gpt-5-mini" are one family).
+ */
+function ai_model_family(string $id): string
+{
+    $s = ai_model_base_id($id);
+    $s = (string)preg_replace('/-(\d{2})-(\d{2})$/', '', $s);
+    $s = (string)preg_replace('/-(preview|exp|experimental|latest|beta)\b/', '', $s);
+    $s = (string)preg_replace('/\d+([.\-]\d+)*(o(?![a-z]))?/', '', $s);
+    $s = (string)preg_replace('/-+/', '-', $s);
+    return trim($s, '-.');
+}
+
+/** Version in the id ("claude-opus-5-5" -> 5.5, "gemini-2.5-pro" -> 2.5, none -> 0); the hotel's rule. */
+function ai_model_version(string $id): float
+{
+    $s = ai_model_base_id($id);
+    $s = (string)preg_replace('/-(\d{2})-(\d{2})$/', '', $s);
+    if (preg_match('/(\d+)(?:[.\-](\d{1,2}))?(?!\d)/', $s, $m)) {
+        return (float)($m[1] . (isset($m[2]) && $m[2] !== '' ? '.' . $m[2] : ''));
+    }
+    return 0.0;
+}
+
+/** Listed, but never picked automatically (previews, aliases, special-purpose models). */
+function ai_model_special(string $id): bool
+{
+    return (bool)preg_match('/(preview|\bexp\b|experimental|beta|latest|codex|\bcode\b|search|research|computer-use|vision|instruct|\boss\b|gemma|learnlm|thinking|chatgpt|imagine|\bo\d)/i', $id);
+}
+
+/** 'big' (never picked for chat when anything else is offered), 'small' (Fast) or 'mid'. */
+function ai_model_tier(string $provider, string $id): string
+{
+    $fam = ai_model_family($id);
+    if (preg_match('/-(opus|fable|argon|pro|ultra)-/', '-' . $fam . '-')) {
+        return 'big';
+    }
+    if (preg_match('/-(haiku|mini|nano|lite|fast|small|tiny)-/', '-' . $fam . '-')) {
+        return 'small';
+    }
+    $prices = AI_HOTEL_PRICES[$provider] ?? [];
+    $own = $prices[strtolower($id)] ?? $prices[ai_model_base_id($id)] ?? null;
+    if ($own !== null) {
+        return $own[1] + 0.0001 >= 15 ? 'big' : 'mid';
+    }
+    foreach ($prices as $known => $p) { // a newer version of a family that is big by price
+        if ($p[1] + 0.0001 >= 15 && ai_model_family((string)$known) === $fam) {
+            return 'big';
+        }
+    }
+    return 'mid';
+}
+
+/** The hotels' price list has this model (the hotel matches the id, then the id without its date). */
+function ai_hotel_has_price(string $provider, string $id): bool
+{
+    $prices = AI_HOTEL_PRICES[$provider] ?? [];
+    return isset($prices[$id]) || isset($prices[ai_model_base_id($id)]);
+}
+
+/** Newest first: version, then the provider's date, then a plain name before a reasoning variant or a dated snapshot. */
+function ai_model_compare(array $a, array $b): int
+{
+    $ia = (string)$a['model_id'];
+    $ib = (string)$b['model_id'];
+    $slow = static fn(string $id): int => preg_match('/(?<!non-)reason|thinking/i', $id) ? 1 : 0;
+    $dated = static fn(string $id): int => ai_model_base_id($id) !== strtolower($id) ? 1 : 0;
+    return ([ai_model_version($ib), (string)($b['created'] ?? '')] <=> [ai_model_version($ia), (string)($a['created'] ?? '')])
+        ?: ([$slow($ia), $dated($ia), $ia] <=> [$slow($ib), $dated($ib), $ib]);
+}
+
+/**
+ * The models that may be picked automatically, newest first, one per name (a plain name stands for its dated snapshots).
+ * @return array{mid:list<array>,small:list<array>,big:list<array>}
+ */
+function ai_model_pool(string $provider, array $listed): array
+{
+    $rows = array_values(array_filter($listed, static fn($m) => is_array($m) && isset($m['model_id'])
+        && !ai_model_banned((string)$m['model_id']) && !ai_model_special((string)$m['model_id'])));
+    usort($rows, 'ai_model_compare');
+    $out = ['mid' => [], 'small' => [], 'big' => []];
+    $seen = [];
+    foreach ($rows as $m) {
+        $base = ai_model_base_id((string)$m['model_id']);
+        if (isset($seen[$base])) {
+            continue;
+        }
+        $seen[$base] = true;
+        $out[ai_model_tier($provider, (string)$m['model_id'])][] = $m;
+    }
+    return $out;
+}
+
+/**
+ * Candidates per role, best first: Primary and Fallback the newest mid-size models (then small ones, then big ones only if
+ * nothing else is offered), Fast the newest small ones. @return array<string,list<string>>
+ */
+function ai_role_candidates(string $provider, array $listed): array
+{
+    $pool = ai_model_pool($provider, $listed);
+    $main = array_column(array_merge($pool['mid'], $pool['small'], $pool['big']), 'model_id');
+    return ['primary' => $main, 'fast' => array_column($pool['small'], 'model_id'), 'fallback' => $main];
+}
+
+/** The newer models of the same family and size as $id, newest first (empty when $id is the newest). @return list<string> */
+function ai_newer_in_family(string $provider, string $id, array $listed): array
+{
+    if ($id === '') {
+        return [];
+    }
+    $fam = ai_model_family($id);
+    $ver = ai_model_version($id);
+    $out = [];
+    foreach (ai_model_pool($provider, $listed)[ai_model_tier($provider, $id)] as $m) {
+        $mid = (string)$m['model_id'];
+        if (ai_model_family($mid) === $fam && ai_model_version($mid) > $ver + 0.0001) {
+            $out[] = $mid;
+        }
+    }
+    return $out;
+}
+
+/**
+ * The plan for one test: per role the models to try in order (the first that answers is kept). No Primary yet: every role
+ * is picked fresh. Otherwise a chosen model is tried after the newer ones of its family.
+ * @return array<string,array{try:list<string>,why:string,was:string}> why: 'picked' | 'newer' | 'kept' | 'none'
+ */
+function ai_latest_plan(string $provider, array $models, array $listed): array
+{
+    $cand = ai_role_candidates($provider, $listed);
+    $fresh = (string)($models['primary'] ?? '') === '';
+    $plan = [];
+    foreach (array_keys(AI_ROLES) as $r) {
+        $was = (string)($models[$r] ?? '');
+        if ($fresh) {
+            $plan[$r] = ['try' => $cand[$r], 'why' => $cand[$r] ? 'picked' : 'none', 'was' => ''];
+        } elseif ($was === '') {
+            $plan[$r] = ['try' => [], 'why' => 'none', 'was' => ''];
+        } else {
+            $newer = ai_newer_in_family($provider, $was, $listed);
+            $plan[$r] = ['try' => array_merge($newer, [$was]), 'why' => $newer ? 'newer' : 'kept', 'was' => $was];
+        }
+    }
+    return $plan;
+}
+
+/** A failed ping that means "this model is not open to this key" (try the next one), not a problem with the key or account. */
+function ai_ping_closed(array $p): bool
+{
+    $h = (int)($p['http'] ?? 0);
+    $msg = (string)($p['message'] ?? '');
+    // Only "this model is not there for you": a 400 such as "max_tokens is not supported with this model" is a request problem
+    // with a NEW model, and must not quietly move the role back to an older one.
+    $gone = '/does not exist|not found|no longer available|not available to|do(?:es)? not have access|no access to/i';
+    return $h === 404 || (($h === 400 || $h === 403) && (bool)preg_match($gone, $msg));
+}
+
+/** What the test changed, in plain lines for the page and the flash message. */
+function ai_latest_notes(array $r): array
+{
+    $lines = [];
+    $picked = [];
+    foreach ((array)($r['changes'] ?? []) as $c) {
+        $role = AI_ROLES[$c['role']] ?? (string)$c['role'];
+        if (($c['why'] ?? '') === 'picked') {
+            $picked[] = $role . ' ' . $c['to'];
+        } elseif (($c['why'] ?? '') === 'newer') {
+            $lines[] = $role . ' moved to the newer ' . $c['to'] . ' (was ' . $c['from'] . ').';
+        } elseif (($c['why'] ?? '') === 'next') {
+            $lines[] = $role . ' is now ' . $c['to'] . ' (' . $c['from'] . ' could not be used).';
+        } elseif (($c['why'] ?? '') === 'dropped') {
+            $lines[] = $role . ' left empty: ' . $c['from'] . ' now holds another role and no other suitable model is free.';
+        }
+    }
+    if ($picked) {
+        array_unshift($lines, 'Newest models picked: ' . implode(', ', $picked) . '.');
+    }
+    if (!empty($r['unpriced'])) {
+        $lines[] = 'The hotels\' price list does not have ' . implode(', ', $r['unpriced']) . ' yet: the hotel will use '
+            . (count($r['unpriced']) === 1 ? 'it' : 'them') . ' but count the cost as US$0 (so the monthly aim cannot be watched) until someone types the price in the hotel\'s Assistant Settings > Models.';
+    }
+    return $lines;
 }
 
 /** @return array{ok:bool,models:array,message:string,ms:int} */
@@ -529,11 +784,12 @@ function ai_list_models(string $provider, string $key): array
         }
         return $seen[$m['model_id']] = true;
     }));
-    usort($models, static fn($a, $b) => strcmp($a['model_id'], $b['model_id']));
+    $models = array_values(array_filter($models, static fn($m) => !ai_model_banned($m['model_id']))); // never listed (owner rule)
+    usort($models, 'ai_model_compare'); // newest first
     return ['ok' => true, 'models' => array_slice($models, 0, AI_MAX_MODELS_KEPT), 'message' => '', 'ms' => $ms];
 }
 
-/** Send "Reply OK" (at most 5 tokens; 16 on Google) to one model. @return array{ok:bool,ms:int,message:string,reply:string} */
+/** Send "Reply OK" (at most 5 tokens; 16 on Google) to one model. @return array{ok:bool,http:int,ms:int,message:string,reply:string} */
 function ai_ping(string $provider, string $key, string $modelId): array
 {
     $req = ai_provider_request($provider, $key);
@@ -557,7 +813,7 @@ function ai_ping(string $provider, string $key, string $modelId): array
     }
     $r = ai_http('POST', $url, $req['headers'], (string)json_encode($body), 30);
     if ($r['http'] < 200 || $r['http'] >= 300) {
-        return ['ok' => false, 'ms' => $r['ms'], 'message' => ai_http_problem($r, $key), 'reply' => ''];
+        return ['ok' => false, 'http' => (int)$r['http'], 'ms' => $r['ms'], 'message' => ai_http_problem($r, $key), 'reply' => ''];
     }
     $j = json_decode($r['body'], true);
     $reply = '';
@@ -570,16 +826,24 @@ function ai_ping(string $provider, string $key, string $modelId): array
             $reply = (string)($j['choices'][0]['message']['content'] ?? '');
         }
     }
-    return ['ok' => true, 'ms' => $r['ms'], 'message' => '', 'reply' => ai_scrub($reply, $key)];
+    return ['ok' => true, 'http' => (int)$r['http'], 'ms' => $r['ms'], 'message' => '', 'reply' => ai_scrub($reply, $key)];
 }
 
+/** At most this many test replies per role in one test (a picked model the provider refuses is replaced by the next). */
+const AI_TRIES_PER_ROLE = 3;
+
 /**
- * The panel's test: list the provider's chat models with this key, then ping every chosen model.
- * @return array{ok:bool,listed:array,checks:array,message:string}
+ * The panel's test: list the provider's chat models with this key, move to the newest models (ai_latest_plan), then ping
+ * every chosen model. 'models' is the choice the test ended with (save it); 'changes' says what moved and why.
+ * @return array{ok:bool,listed:array,checks:array,message:string,models:array,changes:array,unpriced:array}
  */
 function ai_run_test(string $provider, string $key, array $models): array
 {
-    $out = ['ok' => false, 'listed' => [], 'checks' => [], 'message' => ''];
+    $final = [];
+    foreach (array_keys(AI_ROLES) as $r) {
+        $final[$r] = trim((string)($models[$r] ?? ''));
+    }
+    $out = ['ok' => false, 'listed' => [], 'checks' => [], 'message' => '', 'models' => $final, 'changes' => [], 'unpriced' => []];
     $list = ai_list_models($provider, $key);
     if (!$list['ok']) {
         $out['message'] = $list['message'];
@@ -592,28 +856,76 @@ function ai_run_test(string $provider, string $key, array $models): array
         $out['message'] = 'The key works, but the provider offers no chat models to it.';
         return $out;
     }
-    if (($models['primary'] ?? '') === '') {
-        $out['message'] = 'The key works: ' . $n . ' chat model' . ($n === 1 ? '' : 's') . ' listed. Now choose the models (at least a Primary) and click Save and test again.';
+    $plan = ai_latest_plan($provider, $final, $list['models']);
+    $cand = ai_role_candidates($provider, $list['models']);
+    if ($plan['primary']['why'] === 'none') {
+        $out['message'] = 'The key works: ' . $n . ' chat model' . ($n === 1 ? '' : 's') . ' listed, but none can be picked automatically '
+            . '(only previews or special models). Choose the models by hand and click Save and test again.';
         return $out;
     }
     $all = true;
+    $used = []; // one role per model (the hotel's rule)
     foreach (AI_ROLES as $r => $label) {
-        $m = (string)($models[$r] ?? '');
-        if ($m === '') {
+        $p = $plan[$r];
+        if ($p['why'] === 'none') {
             continue;
         }
-        if (!in_array($m, $ids, true)) {
-            $out['checks'][] = ['role' => $r, 'model' => $m, 'ok' => false, 'ms' => 0, 'message' => 'Not offered to this key (any more).'];
-            $all = false;
-            continue;
+        // A chosen model the provider no longer opens to this key: the newest suitable model takes its role.
+        $tries = array_values(array_unique($p['why'] === 'picked' ? $p['try'] : array_merge($p['try'], $cand[$r])));
+        $kept = '';
+        $check = null;
+        $pings = 0;
+        foreach ($tries as $m) {
+            if (isset($used[ai_model_base_id($m)])) {
+                continue;
+            }
+            if (!in_array($m, $ids, true)) {
+                $check = ['role' => $r, 'model' => $m, 'ok' => false, 'ms' => 0, 'message' => 'Not offered to this key (any more).'];
+                continue;
+            }
+            if ($pings >= AI_TRIES_PER_ROLE) {
+                break;
+            }
+            $pings++;
+            $ping = ai_ping($provider, $key, $m);
+            $check = ['role' => $r, 'model' => $m, 'ok' => $ping['ok'], 'ms' => $ping['ms'], 'message' => $ping['ok'] ? 'Answered in ' . $ping['ms'] . ' ms.' : $ping['message']];
+            if ($ping['ok']) {
+                $kept = $m;
+                break;
+            }
+            if (!ai_ping_closed($ping)) {
+                break; // the key or the account has a problem (credit, rate, network): another model would not help
+            }
         }
-        $p = ai_ping($provider, $key, $m);
-        $out['checks'][] = ['role' => $r, 'model' => $m, 'ok' => $p['ok'], 'ms' => $p['ms'],
-            'message' => $p['ok'] ? 'Answered in ' . $p['ms'] . ' ms.' : $p['message']];
-        $all = $all && $p['ok'];
+        if ($check !== null) {
+            $out['checks'][] = $check;
+        }
+        if ($kept === '') {
+            // Nothing answered: keep what was chosen (or the model that failed) so the page shows it, never a model another
+            // role holds. Nothing left to try at all (a fresh pick with no free model): the role stays empty, not a failure.
+            $stay = $p['was'] !== '' ? $p['was'] : (string)($check['model'] ?? '');
+            $final[$r] = $stay !== '' && !isset($used[ai_model_base_id($stay)]) ? $stay : '';
+            if ($check !== null || $final[$r] !== '') {
+                $all = false;
+            } elseif ($p['was'] !== '') {
+                $out['changes'][] = ['role' => $r, 'from' => $p['was'], 'to' => '', 'why' => 'dropped'];
+            }
+        } else {
+            $final[$r] = $kept;
+            if ($p['why'] === 'picked') {
+                $out['changes'][] = ['role' => $r, 'from' => '', 'to' => $kept, 'why' => 'picked'];
+            } elseif ($kept !== $p['was']) {
+                $out['changes'][] = ['role' => $r, 'from' => $p['was'], 'to' => $kept, 'why' => in_array($kept, $p['try'], true) ? 'newer' : 'next'];
+            }
+        }
+        if ($final[$r] !== '') {
+            $used[ai_model_base_id($final[$r])] = true;
+        }
     }
-    $out['ok'] = $all;
-    $out['message'] = $all ? 'Passed: the key works (' . $n . ' chat models listed) and every chosen model answered.'
+    $out['models'] = $final;
+    $out['unpriced'] = array_values(array_filter($final, static fn($m) => $m !== '' && !ai_hotel_has_price($provider, $m)));
+    $out['ok'] = $all && $final['primary'] !== '';
+    $out['message'] = $out['ok'] ? 'Passed: the key works (' . $n . ' chat models listed) and every chosen model answered.'
         : 'Not passed: a chosen model did not answer (see each model below).';
     return $out;
 }
@@ -723,14 +1035,20 @@ function ai_test_saved(PDO $pdo, int $tenantId, int $adminId): array
     }
     $models = ['primary' => (string)$cfg['model_primary'], 'fast' => (string)$cfg['model_fast'], 'fallback' => (string)$cfg['model_fallback']];
     $r = ai_run_test((string)$cfg['provider'], $key, $models);
+    $models = $r['models']; // the newest models the test moved to (owner 2026-11-11): saved, and the fingerprint covers them
     $hash = ai_fingerprint((string)$cfg['provider'], $key, $models, $box);
     $key = '';
     $listed = $r['listed'] ? json_encode(['provider' => $cfg['provider'], 'models' => $r['listed']], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) : null;
+    $notes = ai_latest_notes($r);
     // test_at on PHP's clock: ai_deploy_problem() compares it with PHP's time() (the database clock may differ).
-    $pdo->prepare('UPDATE cp_ai_config SET test_ok = ?, test_hash = ?, test_at = ?, test_json = ?,
+    $pdo->prepare('UPDATE cp_ai_config SET model_primary = ?, model_fast = ?, model_fallback = ?, test_ok = ?, test_hash = ?, test_at = ?, test_json = ?,
                    models_json = COALESCE(?, models_json), models_at = IF(? IS NULL, models_at, NOW()) WHERE tenant_id = ?')
-        ->execute([$r['ok'] ? 1 : 0, $hash, date('Y-m-d H:i:s'), json_encode(['message' => $r['message'], 'checks' => $r['checks']], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        ->execute([$models['primary'], $models['fast'], $models['fallback'], $r['ok'] ? 1 : 0, $hash, date('Y-m-d H:i:s'),
+            json_encode(['message' => $r['message'], 'checks' => $r['checks'], 'notes' => $notes], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
             $listed, $listed, $tenantId]);
+    if ($r['changes']) {
+        audit_log($pdo, $adminId, 'ai_models_latest', $tenantId, null, ['changes' => array_map(static fn($c) => $c['role'] . ':' . ($c['from'] !== '' ? $c['from'] . '>' : '') . $c['to'] . ':' . $c['why'], $r['changes'])]);
+    }
     audit_log($pdo, $adminId, 'ai_tested', $tenantId, null, ['provider' => $cfg['provider'], 'ok' => $r['ok'],
         'checks' => array_map(static fn($c) => $c['role'] . ':' . $c['model'] . ':' . ($c['ok'] ? 'ok' : 'failed'), $r['checks'])]);
     return $r;

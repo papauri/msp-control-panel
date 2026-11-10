@@ -174,8 +174,27 @@ monthly aim and (if asked) switches the Assistant on. No hotel schema change.
 `ai_setup` and leave it "Sent" until it lapses, so the hotels went first). All 18 pure panel suites pass. NOT yet run
 against a real provider or a live hotel: the first real send is that test.
 
-**First real use (owner):** on the live panel open a business > Manage the Assistant, paste the key, Save and test, choose the
-models, Save and test, Send. Watch "Sent" turn Done and "At the hotel now" fill in.
+**First real use (owner):** on the live panel open a business > Manage the Assistant, paste the key, Save and test (the
+newest models are picked and tested), Send. Watch "Sent" turn Done and "At the hotel now" fill in.
+
+## Shipped: always the newest models (owner 2026-11-11)
+**Owner asked:** "Always pick up the most latest models for the providers." Panel only (`app/ai.php`, `public/ai.php`,
+`scripts/tests/ai_test.php`, guide 16b, README); no migration, no hotel change.
+- Every Save and test now moves to the newest models before it pings: no Primary yet -> the newest mid-size Primary and
+  Fallback and small Fast are picked; otherwise each chosen model moves to the newest of its family and size (e.g.
+  claude-sonnet-5 -> claude-sonnet-5-5). The test saves what it ended with and its fingerprint covers that, so a send
+  (needs a passed test < 24 h) always carries the newest models. The page and the flash say what was picked or moved.
+- Owner rules kept: Gemini 4 never listed or chosen; big models (Opus/Fable/Argon/Pro/Ultra or US$15+/M out) never picked
+  for chat unless nothing else is offered; previews, `-latest` aliases and special models (codex, search, research, vision,
+  o-series, open-weight) never picked automatically (still choosable by hand). A picked model the provider refuses (404)
+  is replaced by the next newest, at most 3 test replies a role.
+- No opt-out (the owner said "always"): a hand-picked older version moves to the newest at the next test.
+- `AI_HOTEL_PRICES` copies the hotels' `includes/ai/model-catalog.json` prices (the test fails if they drift, when the hotel
+  repo sits beside the panel). A picked model not in it gets a warning: the hotel uses it but counts its cost as US$0 until
+  a price is typed in its Assistant Settings > Models (the hotel has no price for e.g. gpt-5.1 or claude-fable-5-2 yet).
+  Possible follow-up: carry prices in `ai_setup` (hotel change) or refresh the hotels' catalog.
+- Tests: ai 112 pure / 144 with `--db`; all 18 pure suites pass; hms `--db` 107/0.
+- Pushed 2026-11-11 (owner's standing OK: commit and push after each piece of work).
 
 ## Waiting on the owner
 - The Assistant (AI): add a catalog plan for the add-on (price is the owner's call), then do the first real send
@@ -199,7 +218,7 @@ The annual discount setting is still 0%.
   - `php scripts/tests/clients_test.php --db` (114)
   - `php scripts/tests/trials_test.php --db` (270)
   - `php scripts/tests/hms_test.php --db` (107)
-  - `php scripts/tests/ai_test.php --db` (101; never calls a real AI provider)
+  - `php scripts/tests/ai_test.php --db` (144; never calls a real AI provider)
 
 ## How the HMS staff feature works (short)
 1. The owner queues a change on `staff.php`. It goes into `cp_hms_commands`, and the panel nudges the HMS

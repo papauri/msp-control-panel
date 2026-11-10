@@ -71,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ai_back($tid, false, 'setup');
         }
         $r = ai_test_saved($pdo, $tid, $adminId);
-        flash_set($r['ok'] ? 'ok' : 'error', $r['message']);
+        flash_set($r['ok'] ? 'ok' : 'error', trim($r['message'] . ' ' . implode(' ', ai_latest_notes($r))));
         ai_back($tid, false, 'setup');
     } elseif ($action === 'forget_key') {
         ai_forget_key($pdo, $tid, $adminId);
@@ -191,14 +191,20 @@ if ($listed !== null) {
         echo '<label>' . e($label) . ' model<small class="hint">' . e(AI_ROLE_HELP[$r]) . '</small><select name="model_' . e($r) . '">' . $opts($r) . '</select></label>';
     }
 } else {
-    echo '<p class="muted span-all">Save and test the key first: the provider\'s models are then listed here to choose from.</p>';
+    echo '<p class="muted span-all">Save and test the key: the newest suitable models are then picked and tested for you.</p>';
 }
-echo '</div><p class="muted">Save and test lists the provider\'s chat models with this key, then sends each chosen model one short message '
-    . '("Reply OK", at most 5 words back; a fraction of a cent). Nothing reaches the hotel until you send it below.</p>'
+echo '</div><p class="muted">Save and test lists the provider\'s chat models with this key (newest first), moves to the newest models, '
+    . 'then sends each chosen model one short message ("Reply OK", at most 5 words back; a fraction of a cent). Nothing reaches the hotel until you send it below.</p>'
+    . '<p class="muted">Always the newest models: with no models chosen, the newest are picked (Primary and Fallback mid-size, Fast a small one); '
+    . 'a chosen model is moved to the newest of its family at every test, so an older version chosen here does not stay. '
+    . 'Big models (Opus, Fable, Pro, Argon) are never picked for chat, Gemini 4 is never used, and previews or special models are only used when chosen by hand.</p>'
     . '<button type="submit">Save and test</button></form>';
 if ($cfg && $cfg['test_ok'] !== null) {
     echo '<h3>Last test</h3><p>' . ((int)$cfg['test_ok'] === 1 ? '<span class="pill pill-active">Passed</span>' : '<span class="pill pill-suspended">Not passed</span>')
         . ' <span class="muted">' . $when((string)$cfg['test_at']) . '</span> ' . e((string)($test['message'] ?? '')) . '</p>';
+    foreach ((array)($test['notes'] ?? []) as $note) {
+        echo '<p class="muted">' . e((string)$note) . '</p>';
+    }
     if (!empty($test['checks'])) {
         echo '<div class="scroll"><table><thead><tr>' . view_th('Role', 'What the model is used for.') . view_th('Model', 'The provider\'s model name.')
             . view_th('Result', 'What the model answered to the test.') . '</tr></thead><tbody>';
