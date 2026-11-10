@@ -124,8 +124,11 @@ if ($catalog === null) {
     $p = $person;
     $pid = (int)$p['pms_user_id'];
     $isAll = hms_role_is_all($catalog, (string)$p['role']);
+    $isSuper = hms_is_super_admin($p);
+    $limited = hms_is_limited_admin($catalog, $p);
     $eff = hms_effective_permissions($catalog, $p);
     $defaults = $catalog['roles'][$p['role']]['defaults'] ?? [];
+    $offLabels = array_map(static fn($k) => e((string)($catalog['permissions'][$k]['label'] ?? $k)), $limited ? $p['denies'] : []);
     $uHidden = $hidden($pid) . $once() . '<input type="hidden" name="action" value="queue"><input type="hidden" name="username" value="' . e($p['username']) . '">';
     $act = 'staff.php?id=' . $tid . '&amp;user=' . $pid;
     echo '<section class="card"><h2>' . e($p['full_name'] !== '' ? $p['full_name'] : $p['username']) . '</h2>'
@@ -133,71 +136,95 @@ if ($catalog === null) {
         . '<dl class="facts">'
         . view_fact('Username', e($p['username']))
         . view_fact('Email', $p['email'] !== '' ? e($p['email']) : view_empty())
-        . view_fact('Role', e($roleLabel((string)$p['role'])))
+        . view_fact('Role', e($roleLabel((string)$p['role'])) . ($isSuper ? ' <span class="pill pill-trial">Super Admin</span>' : ($limited ? ' <span class="tag">Limited</span>' : '')))
         . view_fact('Status', (int)$p['is_active'] === 1 ? '<span class="pill pill-active">Active</span>' : '<span class="pill pill-suspended">Deactivated</span>')
         . view_fact('Last sign-in', $when($p['last_login']))
-        . view_fact('Permissions', $isAll ? 'All' : e(count($eff) . ' of ' . count($catalog['permissions'])))
-        . '</dl><div class="tools">';
-    if ((int)$p['is_active'] === 1) {
-        echo '<form method="post" action="' . $act . '" class="tool tool-warn js-once" data-confirm="Deactivate ' . e($p['username']) . '? They are signed out and cannot sign in until reactivated.">' . $uHidden
-            . '<input type="hidden" name="kind" value="deactivate"><h3>Deactivate</h3><p class="muted">Signs them out and stops them signing in. Nothing is deleted; '
-            . 'the hotel\'s administrator can undo it.</p><div class="tool-fields"></div><button type="submit" class="danger">Deactivate</button></form>';
+        . view_fact('Permissions', ($isSuper || ($isAll && !$limited)) ? 'All' : e(count($eff) . ' of ' . count($catalog['permissions'])))
+        . '</dl>';
+    if ($isSuper) {
+        echo '<p class="muted">This is the hotel\'s super admin, its top administrator. Only another super admin can change them, on the hotel\'s Users page, '
+            . 'so nothing about them can be changed from here.</p></section>';
     } else {
-        echo '<form method="post" action="' . $act . '" class="tool js-once">' . $uHidden
-            . '<input type="hidden" name="kind" value="activate"><h3>Reactivate</h3><p class="muted">They can sign in again with their own password.</p>'
-            . '<div class="tool-fields"></div><button type="submit">Reactivate</button></form>';
-    }
-    echo '<form method="post" action="' . $act . '" class="tool js-once">' . $uHidden
-        . '<input type="hidden" name="kind" value="role"><h3>Role</h3><p class="muted">Their permissions go back to the new role\'s usual set.</p>'
-        . '<div class="tool-fields"><label>New role<select name="role" required>' . $roleOptions((string)$p['role']) . '</select></label></div>'
-        . '<button type="submit" class="secondary">Change role</button></form>'
-        . '<form method="post" action="' . $act . '" class="tool js-once">' . $uHidden
-        . '<input type="hidden" name="kind" value="invite"><h3>Invitation</h3><p class="muted">Emails a new one-time link to set their password. Their current password keeps working until they use it.</p>'
-        . '<div class="tool-fields"></div><button type="submit" class="secondary">Send invitation</button></form>';
-    if (!$isAll) {
-        echo '<form method="post" action="' . $act . '" class="tool tool-wide js-once">' . $uHidden
-            . '<input type="hidden" name="kind" value="permissions"><h3>Permissions</h3><p class="muted">Ticked = allowed. '
-            . '<span class="perm-changed">Marked</span> boxes differ from the usual set for ' . e($roleLabel((string)$p['role'])) . '. Saving replaces all of their own changes.</p>'
-            . '<div class="tool-fields perm-grid">';
-        foreach (hms_permission_groups($catalog) as $cat => $keys) {
-            echo '<fieldset><legend>' . e($cat) . '</legend>';
-            foreach ($keys as $k) {
-                if (in_array($k, HMS_ADMIN_ONLY_PERMS, true)) {
-                    continue;
-                }
-                $on = in_array($k, $eff, true);
-                $changed = $on !== in_array($k, $defaults, true);
-                echo '<label class="check' . ($changed ? ' perm-changed' : '') . '"><input type="checkbox" name="perm[]" value="' . e($k) . '"' . ($on ? ' checked' : '') . '> '
-                    . e($catalog['permissions'][$k]['label']) . '</label>';
-            }
-            echo '</fieldset>';
+        echo '<div class="tools">';
+        if ((int)$p['is_active'] === 1) {
+            echo '<form method="post" action="' . $act . '" class="tool tool-warn js-once" data-confirm="Deactivate ' . e($p['username']) . '? They are signed out and cannot sign in until reactivated.">' . $uHidden
+                . '<input type="hidden" name="kind" value="deactivate"><h3>Deactivate</h3><p class="muted">Signs them out and stops them signing in. Nothing is deleted; '
+                . 'the hotel\'s administrator can undo it.</p><div class="tool-fields"></div><button type="submit" class="danger">Deactivate</button></form>';
+        } else {
+            echo '<form method="post" action="' . $act . '" class="tool js-once">' . $uHidden
+                . '<input type="hidden" name="kind" value="activate"><h3>Reactivate</h3><p class="muted">They can sign in again with their own password.</p>'
+                . '<div class="tool-fields"></div><button type="submit">Reactivate</button></form>';
         }
-        echo '</div><button type="submit">Save permissions</button></form>';
-    } else {
-        echo '</div><p class="muted">' . e($roleLabel((string)$p['role'])) . ' has every permission, so there is nothing to tick. To limit them, change their role.</p>';
+        if ($limited) {
+            echo '<div class="tool"><h3>Role</h3><p class="muted">A super admin has switched off some of this administrator\'s permissions, so only a super admin '
+                . 'can change their role, on the hotel\'s Users page.</p><div class="tool-fields"></div>'
+                . '<button type="button" class="secondary" disabled>Change role</button></div>';
+        } else {
+            echo '<form method="post" action="' . $act . '" class="tool js-once">' . $uHidden
+                . '<input type="hidden" name="kind" value="role"><h3>Role</h3><p class="muted">Their permissions go back to the new role\'s usual set.</p>'
+                . '<div class="tool-fields"><label>New role<select name="role" required>' . $roleOptions((string)$p['role']) . '</select></label></div>'
+                . '<button type="submit" class="secondary">Change role</button></form>';
+        }
+        echo '<form method="post" action="' . $act . '" class="tool js-once">' . $uHidden
+            . '<input type="hidden" name="kind" value="invite"><h3>Invitation</h3><p class="muted">Emails a new one-time link to set their password. Their current password keeps working until they use it.</p>'
+            . '<div class="tool-fields"></div><button type="submit" class="secondary">Send invitation</button></form>';
+        if (!$isAll) {
+            echo '<form method="post" action="' . $act . '" class="tool tool-wide js-once">' . $uHidden
+                . '<input type="hidden" name="kind" value="permissions"><h3>Permissions</h3><p class="muted">Ticked = allowed. '
+                . '<span class="perm-changed">Marked</span> boxes differ from the usual set for ' . e($roleLabel((string)$p['role'])) . '. Saving replaces all of their own changes.</p>'
+                . '<div class="tool-fields perm-grid">';
+            foreach (hms_permission_groups($catalog) as $cat => $keys) {
+                echo '<fieldset><legend>' . e($cat) . '</legend>';
+                foreach ($keys as $k) {
+                    if (in_array($k, HMS_ADMIN_ONLY_PERMS, true)) {
+                        continue;
+                    }
+                    $on = in_array($k, $eff, true);
+                    $changed = $on !== in_array($k, $defaults, true);
+                    echo '<label class="check' . ($changed ? ' perm-changed' : '') . '"><input type="checkbox" name="perm[]" value="' . e($k) . '"' . ($on ? ' checked' : '') . '> '
+                        . e($catalog['permissions'][$k]['label']) . '</label>';
+                }
+                echo '</fieldset>';
+            }
+            echo '</div><button type="submit">Save permissions</button></form>';
+        } elseif ($limited) {
+            echo '</div><p class="muted">The hotel\'s super admin has switched off these permissions for this administrator: ' . implode(', ', $offLabels)
+                . '. Only a super admin can change that, on the hotel\'s Users page.</p>';
+        } else {
+            echo '</div><p class="muted">' . e($roleLabel((string)$p['role'])) . ' has every permission unless the hotel\'s super admin switches some off, '
+                . 'on the hotel\'s Users page. That cannot be done from here.</p>';
+        }
+        echo ($isAll ? '' : '</div>') . '</section>';
     }
-    echo ($isAll ? '' : '</div>') . '</section>';
 } else {
     // ---- Everyone
     echo '<section class="card"><h2>Staff</h2>';
     if (!$staff) {
         echo '<p class="muted">The HMS reported no staff.</p>';
     } else {
-        echo '<div class="scroll"><table class="list"><thead><tr>' . view_th('Name', 'Full name and username.') . view_th('Role', 'Their role in the HMS.')
+        echo '<div class="scroll"><table class="list"><thead><tr>' . view_th('Name', 'Full name and username.')
+            . view_th('Role', 'Their role in the HMS. Super Admin: the hotel\'s top administrator, changed only by another super admin on the hotel\'s Users page. '
+                . 'Limited: an administrator whose super admin switched some permissions off.', 'Their role in the HMS.')
             . view_th('Status', 'Active people can sign in.') . view_th('Last sign-in', 'Their last sign-in to the HMS.')
-            . view_th('Permissions', 'How many permissions they have; changes from their role\'s usual set are counted separately.') . '<th></th></tr></thead><tbody>';
+            . view_th('Permissions', 'How many permissions they have; changes from their role\'s usual set are counted separately. '
+                . 'Administrators have all unless the hotel\'s super admin switched some off.',
+                'How many permissions they have; changes from their role\'s usual set are counted separately.') . '<th></th></tr></thead><tbody>';
         foreach ($staff as $p) {
-            $isAll = hms_role_is_all($catalog, (string)$p['role']);
+            $isSuper = hms_is_super_admin($p);
+            $limited = hms_is_limited_admin($catalog, $p);
+            $isAll = $isSuper || (hms_role_is_all($catalog, (string)$p['role']) && !$limited); // shows "All"
             $own = count($p['grants']) + count($p['denies']);
             echo '<tr' . ((int)$p['is_active'] !== 1 ? ' class="muted"' : '') . '>'
                 . '<td data-label="Name"><a href="staff.php?id=' . $tid . '&amp;user=' . (int)$p['pms_user_id'] . '">' . e($p['full_name'] !== '' ? $p['full_name'] : $p['username']) . '</a>'
                 . '<br><small class="muted">' . e($p['username']) . ($p['email'] !== '' ? ' &middot; ' . e($p['email']) : '') . '</small></td>'
-                . '<td data-label="Role">' . e($roleLabel((string)$p['role'])) . '</td>'
+                . '<td data-label="Role">' . e($roleLabel((string)$p['role']))
+                . ($isSuper ? ' <span class="pill pill-trial">Super Admin</span>' : ($limited ? ' <span class="tag">Limited</span>' : '')) . '</td>'
                 . '<td data-label="Status">' . ((int)$p['is_active'] === 1 ? '<span class="pill pill-active">Active</span>' : '<span class="pill pill-suspended">Deactivated</span>') . '</td>'
                 . '<td data-label="Last sign-in" class="nw">' . $when($p['last_login']) . '</td>'
                 . '<td data-label="Permissions">' . ($isAll ? 'All' : e(count(hms_effective_permissions($catalog, $p)) . ' of ' . count($catalog['permissions'])))
-                . ($own > 0 && !$isAll ? ' <span class="muted">(' . $own . ' changed)</span>' : '') . '</td>'
-                . '<td data-label=""><a class="button secondary" href="staff.php?id=' . $tid . '&amp;user=' . (int)$p['pms_user_id'] . '">Manage</a></td></tr>';
+                . ($limited ? ' <span class="muted">(' . count($p['denies']) . ' switched off by the super admin)</span>'
+                    : ($own > 0 && !$isAll ? ' <span class="muted">(' . $own . ' changed)</span>' : '')) . '</td>'
+                . '<td data-label=""><a class="button secondary" href="staff.php?id=' . $tid . '&amp;user=' . (int)$p['pms_user_id'] . '">' . ($isSuper ? 'View' : 'Manage') . '</a></td></tr>';
         }
         echo '</tbody></table></div>';
     }

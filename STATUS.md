@@ -1,7 +1,7 @@
 # STATUS: MSP licence control panel
 
 **Read this first.** Any agent (Claude, Cline, another provider) should be able to continue from this file alone. It is
-kept current during work, not only at the end. Last updated: **2026-11-10**.
+kept current during work, not only at the end. Last updated: **2026-11-11**.
 
 ## What this is
 This is a private PHP 8.3 / MySQL panel that licenses and bills the owner's hotel PMS / HMS installs. Each HMS calls
@@ -121,8 +121,25 @@ Everything up to commit `5022fe1` is live:
   refused during a view-only trial, and the greying reaches page headers and every link. See Liwonde's `STATUS.md`. It
   went live in both hotels; the panel needs no change.
 
+## In progress: the hotel's Super Admin on the panel (owner 2026-11-11)
+**Built, not pushed. Owner to apply migration 012, then OK the push.** The hotels shipped the Super Admin
+(`admin_users.is_super_admin`, hotel migration 080, role stays `admin`; commits `0578bae` Rosalyn's / `5e8645d` Liwonde).
+- **Hotels (both, identical, not pushed):** `includes/licence-staff.php` adds `super_admin` 0|1 to each staff report row
+  (0 before hotel migration 080); `scripts/tests/licence_staff.php` checks it (53 pure).
+- **Panel:**
+  - `migrations/012_hms_super_admin.sql`: `cp_hms_staff.is_super_admin` (additive). **Written, NOT applied.** It must be
+    applied before the panel code goes live: the staff report INSERT writes the column and would fail without it.
+  - `app/hms.php`: the cleaner reads `super_admin` (missing = 0); effective permissions: super admin = all, admin = all
+    minus denies; every change to a super admin refused; a role change on a limited admin refused (same order and
+    meaning as the hotel's own refusals); the admin-permissions refusal reworded.
+  - `public/staff.php`: Super Admin badge, no changes offered for them (pointer to the hotel's Users page); a limited
+    admin is marked Limited, shows the count and the list of what is off, and their role cannot be changed.
+  - `scripts/tests/hms_test.php`: 80 pure. Guide section 16 and `README.md` updated.
+- **Order:** apply 012 (then the `--db` tests and a fresh export), then push the panel. The hotels can go at any time:
+  the panel live today ignores the new `super_admin` field.
+
 ## Waiting on the owner
-- Nothing blocking.
+- Super Admin on the panel: apply migration 012, then OK the push (see above).
 
 ## Plan prices (set 2026-11-10 at the owner's request, live data, audited; the owner can change them on the Catalog page)
 | Plan | Price (MWK) |

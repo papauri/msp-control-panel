@@ -5,8 +5,9 @@
 // here is QUEUED (cp_hms_commands), carried in the next SIGNED licence answer as staff_commands, applied by the HMS (which
 // checks the signature, the tenant, the domain and that each command id is new), and confirmed in the HMS's staff report
 // (public/api/hms-staff.php). That report also carries the staff list: id, username, email, name, role, active, last
-// sign-in and the per-user permission changes. Never a password. The panel nudges the HMS straight after a change, so it
-// usually lands within a minute; otherwise at the HMS's next check-in (hourly while staff use it).
+// sign-in, the per-user permission changes and whether they are the hotel's super admin. Never a password. The panel
+// nudges the HMS straight after a change, so it usually lands within a minute; otherwise at the HMS's next check-in
+// (hourly while staff use it).
 //
 // Commands (data is a JSON object):
 //   deactivate / activate   {}
@@ -15,6 +16,9 @@
 //   create                  {full_name, email, role}  the HMS emails its own invitation link (no password ever travels)
 //   invite                  {}  a fresh invitation link
 // The HMS refuses what would lock the hotel out (the last active admin) and anything for a user that no longer matches.
+// A super admin (hotel migration 080, owner 2026-11-11) is changed only by another super admin on the hotel's Users page,
+// never from here; a super admin may switch permissions off for a plain administrator (reported as that admin's denies),
+// and then only a super admin may change that administrator's role. The panel refuses the same, before anything is queued.
 
 const HMS_KINDS = [
     'deactivate' => 'Deactivate', 'activate' => 'Reactivate', 'role' => 'Change role',
@@ -121,6 +125,7 @@ function hms_clean_staff($list): array
             'full_name' => hms_str($s['full_name'] ?? '', 255), 'role' => $role,
             'is_active' => !empty($s['is_active']) ? 1 : 0, 'last_login' => $last,
             'grants' => hms_clean_keys($s['grants'] ?? []), 'denies' => hms_clean_keys($s['denies'] ?? []),
+            'is_super_admin' => !empty($s['super_admin']) ? 1 : 0, // older HMS reports do not carry it: not a super admin
         ];
     }
     return array_values($out);
@@ -143,13 +148,20 @@ function hms_clean_results($list): array
 
 // ---------------------------------------------------------------------------------------------------- pure: permissions
 
-/** Permission keys a person effectively holds: the role's defaults (all for a role with no list), then their own changes. */
+/**
+ * Permission keys a person effectively holds: a super admin has all; a role with no list (admin) has all minus what the
+ * hotel's super admin switched off (denies); any other role has its defaults, then their own changes.
+ */
 function hms_effective_permissions(array $catalog, array $staff): array
 {
     $all = array_keys($catalog['permissions']);
+    if (hms_is_super_admin($staff)) {
+        return $all;
+    }
     $role = $catalog['roles'][$staff['role']] ?? null;
     if ($role !== null && $role['defaults'] === null) {
-        return $all; // e.g. admin: everything, always
+        $off = array_flip($staff['denies'] ?? []);
+        return array_values(array_filter($all, static fn($k) => !isset($off[$k])));
     }
     $have = array_flip($role['defaults'] ?? []);
     foreach ($staff['grants'] ?? [] as $k) {
@@ -161,7 +173,19 @@ function hms_effective_permissions(array $catalog, array $staff): array
     return array_values(array_filter($all, static fn($k) => isset($have[$k])));
 }
 
-/** True when this role has every permission by definition (its permissions cannot be changed). */
+/** True when the HMS reported this person as its super admin. */
+function hms_is_super_admin(array $staff): bool
+{
+    return !empty($staff['is_super_admin']);
+}
+
+/** An administrator (not a super admin) whose permissions the hotel's super admin has switched off in part. */
+function hms_is_limited_admin(array $catalog, array $staff): bool
+{
+    return !hms_is_super_admin($staff) && hms_role_is_all($catalog, (string)($staff['role'] ?? '')) && !empty($staff['denies']);
+}
+
+/** True when this role has every permission by definition (its permissions cannot be set from here). */
 function hms_role_is_all(array $catalog, string $role): bool
 {
     return isset($catalog['roles'][$role]) && $catalog['roles'][$role]['defaults'] === null;
@@ -263,6 +287,9 @@ function hms_validate_command(string $kind, array $in, ?array $catalog, array $s
     }
     $who = ($s['full_name'] !== '' ? $s['full_name'] : $s['username']) . ' (' . $s['username'] . ')';
     $row = ['kind' => $kind, 'username' => (string)$s['username'], 'pms_user_id' => (int)$s['pms_user_id'], 'data' => []];
+    if (hms_is_super_admin($s)) { // no change of any kind, as the HMS refuses too
+        return ['This is a super admin; only another super admin can change them, on the hotel\'s Users page.', null];
+    }
     $isAdmin = hms_role_is_all($catalog, (string)$s['role']);
     $lastAdmin = $isAdmin && (int)$s['is_active'] === 1 && hms_active_admins($catalog, $staff) <= 1;
     switch ($kind) {
@@ -287,6 +314,9 @@ function hms_validate_command(string $kind, array $in, ?array $catalog, array $s
             if ($role === $s['role']) {
                 return ['That is already their role.', null];
             }
+            if (hms_is_limited_admin($catalog, $s)) {
+                return ['A super admin has switched off some of this administrator\'s permissions, so only a super admin can change their role, on the hotel\'s Users page.', null];
+            }
             if ($lastAdmin && !hms_role_is_all($catalog, $role)) {
                 return ['This is the hotel\'s last active administrator: their role cannot be lowered.', null];
             }
@@ -294,7 +324,7 @@ function hms_validate_command(string $kind, array $in, ?array $catalog, array $s
             return ['', $row + ['summary' => 'Change ' . $who . ' to ' . $catalog['roles'][$role]['label'] . ' (their permissions go back to that role\'s usual set)']];
         case 'permissions':
             if ($isAdmin) {
-                return ['Administrators have every permission; change their role instead.', null];
+                return ['An administrator\'s permissions are set only by the hotel\'s super admin, on the hotel\'s Users page, not from here.', null];
             }
             if (!isset($catalog['roles'][$s['role']])) {
                 return ['This person\'s role is not in the HMS\'s list, so permissions cannot be set from here.', null];
@@ -350,7 +380,7 @@ function hms_catalog(array $tenant): ?array
     return is_array($c) && isset($c['roles'], $c['permissions']) ? $c : null;
 }
 
-/** The last staff list from this HMS, with grants / denies decoded. */
+/** The last staff list from this HMS, with grants / denies decoded (is_super_admin 0 on rows from before migration 012). */
 function hms_staff(PDO $pdo, int $tenantId): array
 {
     $st = $pdo->prepare('SELECT * FROM cp_hms_staff WHERE tenant_id = ? ORDER BY is_active DESC, full_name, username');
@@ -359,6 +389,7 @@ function hms_staff(PDO $pdo, int $tenantId): array
     foreach ($st->fetchAll() as $r) {
         $r['grants'] = hms_clean_keys(json_decode((string)$r['grants'], true));
         $r['denies'] = hms_clean_keys(json_decode((string)$r['denies'], true));
+        $r['is_super_admin'] = (int)($r['is_super_admin'] ?? 0) === 1 ? 1 : 0;
         $out[] = $r;
     }
     return $out;
@@ -457,11 +488,12 @@ function hms_store_report(PDO $pdo, int $tenantId, array $results, ?array $staff
         }
         if ($staff !== null) {
             $pdo->prepare('DELETE FROM cp_hms_staff WHERE tenant_id = ?')->execute([$tenantId]);
-            $ins = $pdo->prepare('INSERT INTO cp_hms_staff (tenant_id, pms_user_id, username, email, full_name, role, is_active, last_login, grants, denies)
-                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            // is_super_admin needs migration 012 (apply it before this code goes live).
+            $ins = $pdo->prepare('INSERT INTO cp_hms_staff (tenant_id, pms_user_id, username, email, full_name, role, is_active, last_login, grants, denies, is_super_admin)
+                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             foreach ($staff as $s) {
                 $ins->execute([$tenantId, $s['pms_user_id'], $s['username'], $s['email'], $s['full_name'], $s['role'], $s['is_active'], $s['last_login'],
-                    json_encode($s['grants']), json_encode($s['denies'])]);
+                    json_encode($s['grants']), json_encode($s['denies']), (int)($s['is_super_admin'] ?? 0)]);
             }
             $pdo->prepare('UPDATE cp_tenants SET hms_synced_at = NOW()' . ($catalog !== null ? ', hms_catalog = ?' : '') . ' WHERE id = ?')
                 ->execute($catalog !== null ? [json_encode($catalog, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $tenantId] : [$tenantId]);

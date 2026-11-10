@@ -88,7 +88,43 @@ t_eq('permissions back to the role set = no own changes', ['', []], [$e, (array)
 t_eq('the role travels with permissions (the HMS refuses if it changed there)', 'receptionist', $r['data']['role']);
 t_eq('permissions summary counts', 'Permissions for J Banda (jbanda): 1 added, 1 removed', $r['summary']);
 t_eq('no change refused', 'Nothing changed.', $v('permissions', ['username' => 'jbanda', 'permissions' => ['dashboard', 'reports']])[0]);
-t_eq('admin permissions cannot be set', 'Administrators have every permission; change their role instead.', $v('permissions', ['username' => 'boss', 'permissions' => []])[0]);
+t_eq('admin permissions cannot be set', 'An administrator\'s permissions are set only by the hotel\'s super admin, on the hotel\'s Users page, not from here.', $v('permissions', ['username' => 'boss', 'permissions' => []])[0]);
+
+// --- The hotel's super admin (owner 2026-11-11) ---
+t_eq('older reports carry no super_admin: 0', [0, 0, 0], array_column($staff, 'is_super_admin'));
+$sup = hms_clean_staff([
+    ['id' => 1, 'username' => 'owner', 'email' => 'o@hotel.mw', 'full_name' => 'Owner', 'role' => 'admin', 'is_active' => 1, 'super_admin' => 1, 'denies' => ['reports']],
+    ['id' => 2, 'username' => 'gm', 'email' => 'gm@hotel.mw', 'full_name' => 'GM', 'role' => 'admin', 'is_active' => 1, 'super_admin' => 0, 'denies' => ['reports', 'bookings']],
+    ['id' => 3, 'username' => 'deputy', 'email' => 'd@hotel.mw', 'full_name' => 'Deputy', 'role' => 'admin', 'is_active' => 1, 'super_admin' => 0],
+    ['id' => 4, 'username' => 'oldboss', 'email' => 'ob@hotel.mw', 'full_name' => 'Old Boss', 'role' => 'admin', 'is_active' => 0, 'super_admin' => 1],
+    ['id' => 5, 'username' => 'desk', 'email' => 'desk@hotel.mw', 'full_name' => 'Desk', 'role' => 'receptionist', 'is_active' => 1],
+]);
+t_eq('the cleaner reads super_admin', [1, 0, 0, 1, 0], array_column($sup, 'is_super_admin'));
+t_eq('effective: a super admin has all, whatever is reported', ['dashboard', 'bookings', 'reports', 'user_management'], hms_effective_permissions($cat, $sup[0]));
+t_eq('effective: an administrator has all minus what the super admin switched off', ['dashboard', 'user_management'], hms_effective_permissions($cat, $sup[1]));
+t_eq('effective: an unlimited administrator has all', ['dashboard', 'bookings', 'reports', 'user_management'], hms_effective_permissions($cat, $sup[2]));
+t_eq('limited admin detected (not a super admin, not an unlimited admin, not another role)', [false, true, false, false, false],
+    array_map(static fn($s) => hms_is_limited_admin($cat, $s), $sup));
+$vs = static fn(string $k, array $in) => hms_validate_command($k, $in, $cat, $sup)[0];
+$superMsg = 'This is a super admin; only another super admin can change them, on the hotel\'s Users page.';
+foreach (['deactivate' => [], 'activate' => [], 'role' => ['role' => 'manager'], 'permissions' => ['permissions' => ['dashboard']], 'invite' => []] as $k => $extra) {
+    t_eq("super admin: $k refused", $superMsg, $vs($k, ['username' => 'owner'] + $extra));
+    t_eq("inactive super admin: $k refused the same way", $superMsg, $vs($k, ['username' => 'OldBoss'] + $extra));
+}
+t_eq('limited admin: role change refused', 'A super admin has switched off some of this administrator\'s permissions, so only a super admin can change their role, on the hotel\'s Users page.',
+    $vs('role', ['username' => 'gm', 'role' => 'manager']));
+t_eq('limited admin: same role still says so first (hotel order)', 'That is already their role.', $vs('role', ['username' => 'gm', 'role' => 'admin']));
+t_eq('limited admin: deactivate still allowed', '', $vs('deactivate', ['username' => 'gm']));
+t_eq('limited admin: invite still allowed', '', $vs('invite', ['username' => 'gm']));
+t_eq('unlimited admin: role change still allowed', '', $vs('role', ['username' => 'deputy', 'role' => 'manager']));
+t_eq('another role: role change still allowed', '', $vs('role', ['username' => 'desk', 'role' => 'manager']));
+t_eq('super admins still count as active administrators', 3, hms_active_admins($cat, $sup));
+$lone = [$sup[2], $sup[3], $sup[4]];
+t_eq('last-admin rule unchanged: the only active admin cannot be lowered', 'This is the hotel\'s last active administrator: their role cannot be lowered.',
+    hms_validate_command('role', ['username' => 'deputy', 'role' => 'manager'], $cat, $lone)[0]);
+t_eq('last-admin rule unchanged: nor deactivated', 'This is the hotel\'s last active administrator: add or reactivate another one first.',
+    hms_validate_command('deactivate', ['username' => 'deputy'], $cat, $lone)[0]);
+t_eq('create is not affected by super admins', '', $vs('create', ['username' => 'newone', 'full_name' => 'New One', 'email' => 'n1@hotel.mw', 'role' => 'receptionist']));
 [$e, $r] = $v('create', ['username' => 'newbie', 'full_name' => 'New Person', 'email' => 'NEW@hotel.mw', 'role' => 'receptionist']);
 t_eq('create ok, email lower-cased, no password anywhere', ['', ['full_name' => 'New Person', 'email' => 'new@hotel.mw', 'role' => 'receptionist']], [$e, $r['data']]);
 t_eq('create: username taken', 'That username is already used in this HMS.', $v('create', ['username' => 'JBanda', 'full_name' => 'X', 'email' => 'x@hotel.mw', 'role' => 'manager'])[0]);
