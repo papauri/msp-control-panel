@@ -145,14 +145,14 @@ $itemForm = static function (?array $it): string {
     return '<form method="post" action="settings.php#items" class="bill-item-form">' . csrf_field()
         . '<input type="hidden" name="action" value="save_item"><input type="hidden" name="item_id" value="' . $id . '">'
         . '<div class="bill-grid"><label>Category<select name="category">' . $opts . '</select></label>'
-        . '<label>SKU / code (optional)<input type="text" name="sku" maxlength="60" value="' . e($it['sku'] ?? '') . '"></label></div>'
+        . '<label>SKU / code<small class="hint">Optional</small><input type="text" name="sku" maxlength="60" value="' . e($it['sku'] ?? '') . '"></label></div>'
         . '<label>Item<input type="text" name="item" required maxlength="190" value="' . e($it['item'] ?? '') . '"></label>'
         . '<label>Description<textarea name="description" rows="2" maxlength="2000">' . e($it['description'] ?? '') . '</textarea></label>'
         . '<div class="bill-grid"><label>Unit price<input type="text" name="unit_price" inputmode="decimal" required value="' . e($it ? number_format((float)$it['unit_price'], 2, '.', '') : '') . '"></label>'
-        . '<label>Unit (for example month, piece, hour)<input type="text" name="unit" maxlength="20" value="' . e($it['unit'] ?? '') . '"></label>'
-        . '<label>Cost price (yours, optional)<input type="text" name="cost_price" inputmode="decimal" value="' . e($it && $it['cost_price'] !== null ? number_format((float)$it['cost_price'], 2, '.', '') : '') . '"></label></div>'
+        . '<label>Unit<small class="hint">For example month, piece, hour</small><input type="text" name="unit" maxlength="20" value="' . e($it['unit'] ?? '') . '"></label>'
+        . '<label>Cost price<small class="hint">Yours, optional</small><input type="text" name="cost_price" inputmode="decimal" value="' . e($it && $it['cost_price'] !== null ? number_format((float)$it['cost_price'], 2, '.', '') : '') . '"></label></div>'
         . '<label>Currency<input type="text" name="currency" required maxlength="3" value="' . e($it['currency'] ?? billing_setting('default_currency')) . '"></label>'
-        . '<label>Plan (bill this every…)<select name="billing_interval"><option value="">Not a plan (one-off item)</option>'
+        . '<label>Plan<small class="hint">Bill this every…</small><select name="billing_interval"><option value="">Not a plan (one-off item)</option>'
         . implode('', array_map(static fn($m, $l) => '<option value="' . $m . '"' . ((int)($it['billing_interval'] ?? 0) === $m ? ' selected' : '') . '>' . e($l) . ' (' . e(plan_interval_words($m)) . ')</option>',
             array_keys(PLAN_INTERVALS), PLAN_INTERVALS)) . '</select></label>'
         . '<label>Order<input type="number" name="sort" min="0" max="9999" value="' . e((string)($it['sort'] ?? '0')) . '"></label>'

@@ -148,9 +148,9 @@ $owedCurrencies = array_filter($sum['totals'], static fn($t) => (float)$t['owed'
 echo '<section class="card"><h2>Email</h2>'
     . '<p class="muted">Send the statement (PDF attached), or a payment request listing what is owed and how to pay.</p>'
     . '<form method="post" action="' . e($self) . '">' . csrf_field()
-    . '<label>To (separate several with commas)<input type="text" name="to_emails" required maxlength="500" value="' . e(implode(', ', $toList)) . '"></label>'
+    . '<label>To<small class="hint">Separate several with commas</small><input type="text" name="to_emails" required maxlength="500" value="' . e(implode(', ', $toList)) . '"></label>'
     . '<label>Copy to<input type="text" name="cc" maxlength="500" value="' . e(implode(', ', $ccList)) . '"></label>'
-    . '<label>Personal note (shown at the top of the email)<textarea name="message" rows="3" maxlength="2000"></textarea></label>'
+    . '<label>Personal note<small class="hint">Shown at the top of the email</small><textarea name="message" rows="3" maxlength="2000"></textarea></label>'
     . '<button type="submit" name="action" value="send_statement">Send statement</button>'
     . ((float)$curTotals['owed'] > BILLING_TOLERANCE && count($owedCurrencies) <= 1 ? ' <button type="submit" name="action" value="send_request" class="secondary">Send payment request</button>' : '')
     . '</form></section>';

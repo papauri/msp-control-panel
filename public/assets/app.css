@@ -172,3 +172,24 @@ table.bill-lines .in-cost { width: 8rem; text-align: right; }
 @media (max-width: 640px) {
   table.bill-lines .in-cost { width: 100%; }
 }
+
+/* Forms (2026-11-10): a short label, a grey hint under it, then the field. In a grid the fields of one row line up
+   (subgrid), even when a hint wraps. Sections get a small heading; long fields span two columns. */
+form label small.hint { display: block; font-weight: 400; font-size: .82rem; line-height: 1.35; color: #5b6675; margin-top: .1rem; }
+h3.form-sec { font-size: .95rem; margin: 1.25rem 0 .75rem; padding-bottom: .35rem; border-bottom: 1px solid #e3e6ea; }
+form > h3.form-sec:first-of-type, .card > h3.form-sec:first-child { margin-top: .25rem; }
+h3.form-sec + p.muted { margin: -.4rem 0 .75rem; font-size: .9rem; }
+.bill-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); column-gap: 1.25rem; row-gap: 0; align-items: start; }
+.bill-grid > label:not(.check) { display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; align-content: start; margin: 0 0 1rem; min-width: 0; }
+.bill-grid > label:not(.check) > small.hint { grid-row: 2; }
+.bill-grid > label:not(.check) > input, .bill-grid > label:not(.check) > select, .bill-grid > label:not(.check) > textarea { grid-row: 3; max-width: none; align-self: start; }
+.bill-grid > label:not(.check) > small:not(.hint) { grid-row: 4; }
+.bill-grid > :not(label), .bill-grid > label.check { grid-row: span 4; align-self: start; }
+.bill-grid > .span-all { grid-column: 1 / -1; }
+.bill-grid textarea { resize: vertical; min-height: 4.5rem; }
+form fieldset.form-wide { max-width: none; }
+fieldset#modules { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0 1rem; }
+fieldset#modules legend { grid-column: 1 / -1; }
+@media (min-width: 760px) {
+  .bill-grid > .span-2 { grid-column: span 2; }
+}

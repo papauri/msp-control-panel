@@ -523,18 +523,18 @@ if ($mode === 'none') {
         echo '<option value="' . e($k) . '"' . ($nc('nc_kind') === $k ? ' selected' : '') . '>' . e($l) . '</option>';
     }
     echo '</select></label>'
-        . '<label>Name (company, or the person\'s full name)<input type="text" name="nc_name" id="nc_name" maxlength="190" value="' . e($nc('nc_name')) . '"></label>'
+        . '<label>Name<small class="hint">Company, or the person\'s full name</small><input type="text" name="nc_name" id="nc_name" maxlength="190" value="' . e($nc('nc_name')) . '"></label>'
         . '<label>Contact person<input type="text" name="nc_contact" maxlength="120" value="' . e($nc('nc_contact')) . '"></label>'
         . '<label>Email<input type="email" name="nc_email" maxlength="190" value="' . e($nc('nc_email')) . '"></label>'
-        . '<label>Copy to (other emails)<input type="text" name="nc_cc" maxlength="500" value="' . e($nc('nc_cc')) . '"></label>'
+        . '<label>Copy to<small class="hint">Other emails</small><input type="text" name="nc_cc" maxlength="500" value="' . e($nc('nc_cc')) . '"></label>'
         . '<label>Phone<input type="text" name="nc_phone" maxlength="60" value="' . e($nc('nc_phone')) . '"></label>'
         . '<label>Address<textarea name="nc_address" rows="3" maxlength="1000">' . e($nc('nc_address')) . '</textarea></label>'
         . '<p class="muted">Saved as a client when this ' . e(strtolower($label)) . ' is saved. More details can be added on the client page.</p></fieldset>'
         . '<h2>Printed customer details</h2><div class="bill-grid">'
-        . '<label>Customer name (printed)<input type="text" name="customer_name" id="customer_name" maxlength="190" value="' . e($fv('customer_name')) . '"' . $dis . '></label>'
+        . '<label>Customer name<small class="hint">Printed</small><input type="text" name="customer_name" id="customer_name" maxlength="190" value="' . e($fv('customer_name')) . '"' . $dis . '></label>'
         . '<label>Contact person<input type="text" name="customer_contact" id="customer_contact" maxlength="120" value="' . e($fv('customer_contact')) . '"' . $dis . '></label>'
-        . '<label>Customer email (printed)<input type="email" name="customer_email" id="customer_email" maxlength="190" value="' . e($fv('customer_email')) . '"' . $dis . '></label>'
-        . '<label>Address (printed)<textarea name="customer_address" id="customer_address" rows="3" maxlength="1000"' . $dis . '>' . e($fv('customer_address')) . '</textarea></label>'
+        . '<label>Customer email<small class="hint">Printed</small><input type="email" name="customer_email" id="customer_email" maxlength="190" value="' . e($fv('customer_email')) . '"' . $dis . '></label>'
+        . '<label>Address<small class="hint">Printed</small><textarea name="customer_address" id="customer_address" rows="3" maxlength="1000"' . $dis . '>' . e($fv('customer_address')) . '</textarea></label>'
         . '</div><p class="muted">Filled from the client; change them only for what is printed on this ' . e(strtolower($label)) . '.</p>'
         . '<h2>Details</h2><div class="bill-grid">'
         . '<label>Date<input type="date" name="issue_date" required value="' . e($fv('issue_date')) . '"' . $dis . '></label>'
@@ -580,7 +580,7 @@ if ($mode === 'none') {
         . '<label>' . e(billing_setting('tax_label')) . ' rate (%)<input type="text" name="tax_rate" id="tax_rate" inputmode="decimal" value="' . e($num($fv('tax_rate'))) . '"' . $dis . '></label>'
         . '<label>When paid in full, extend the licence by (months)<input type="number" name="extend_months" id="extend_months" min="0" max="60" value="' . e($fv('extend_months') === '' ? '0' : $fv('extend_months')) . '"' . $dis . '>'
         . '<small class="muted">' . ($isInvoice ? 'Hosted businesses only. 0 = this invoice does not change the licence.' : 'Carried to the invoice when this quotation is converted.') . '</small></label>'
-        . '</div><label>Notes (printed)<textarea name="notes" rows="3" maxlength="2000"' . $dis . '>' . e($fv('notes')) . '</textarea></label>';
+        . '</div><label>Notes<small class="hint">Printed</small><textarea name="notes" rows="3" maxlength="2000"' . $dis . '>' . e($fv('notes')) . '</textarea></label>';
     echo '<div class="bill-totals" id="totals" data-tax-label="' . e(billing_setting('tax_label')) . '">'
         . '<p><span>Subtotal</span><strong id="t-sub">' . e(billing_money((float)$doc['subtotal'], $cur)) . '</strong></p>'
         . '<p><span>Discount</span><strong id="t-disc">' . e(billing_money((float)$doc['discount'], $cur)) . '</strong></p>'
@@ -623,9 +623,9 @@ if (!$isNew) {
         echo '<section class="card"><h2>Email</h2>'
             . '<p class="muted">Sends a branded email with the ' . e(strtolower($label)) . ' attached as a PDF. Sending a draft marks it as sent.</p>'
             . '<form method="post" action="document.php?id=' . (int)$doc['id'] . '">' . $hidden
-            . '<label>To (separate several with commas)<input type="text" name="to" required maxlength="500" value="' . e($defTo) . '"></label>'
+            . '<label>To<small class="hint">Separate several with commas</small><input type="text" name="to" required maxlength="500" value="' . e($defTo) . '"></label>'
             . '<label>Copy to<input type="text" name="cc" maxlength="500" value="' . e($defCc) . '"></label>'
-            . '<label>Personal note (shown at the top of the email)<textarea name="message" rows="3" maxlength="2000"></textarea></label>'
+            . '<label>Personal note<small class="hint">Shown at the top of the email</small><textarea name="message" rows="3" maxlength="2000"></textarea></label>'
             . '<button type="submit" name="action" value="send">Send ' . e(strtolower($label)) . '</button>'
             . ($canRemind ? ' <button type="submit" name="action" value="reminder" class="secondary">Send reminder</button>' : '')
             . '</form></section>';
@@ -643,7 +643,7 @@ if (!$isNew) {
             foreach (billing_payment_methods() as $mk => $ml) {
                 echo '<option value="' . e($mk) . '">' . e($ml) . '</option>';
             }
-            echo '</select></label><label>Reference (receipt, transfer or cheque number)<input type="text" name="reference" required minlength="3" maxlength="190"></label>'
+            echo '</select></label><label>Reference<small class="hint">Receipt, transfer or cheque number</small><input type="text" name="reference" required minlength="3" maxlength="190"></label>'
                 . '<button type="submit">Record payment</button></form></section>';
         }
         $payments = billing_doc_payments($pdo, (int)$doc['id']);

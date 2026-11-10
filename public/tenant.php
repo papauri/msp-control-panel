@@ -504,7 +504,7 @@ if ($tenant) {
         . '<form method="post" action="tenant.php?id=' . $tid0 . '#golive" class="js-once">' . $tHidden
         . '<input type="hidden" name="action" value="go_live_send">'
         . '<input type="hidden" name="once" value="' . e(billing_once_issue('go_live_' . $tid0)) . '">'
-        . '<label>Personal note at the top (optional)<textarea name="message" rows="3" maxlength="2000"></textarea></label>'
+        . '<label>Personal note at the top<small class="hint">Optional</small><textarea name="message" rows="3" maxlength="2000"></textarea></label>'
         . '<button type="submit" class="secondary">Send introduction email</button></form></section>';
 
     // Billing (2026-11-09): what this business owes on sent invoices.
@@ -557,7 +557,7 @@ if ($tenant) {
         . '<label>Months paid<input type="number" name="months" min="1" max="60" value="1" required></label>'
         . '<label>Amount received (' . e($tenant['currency']) . ')<input type="text" name="amount" inputmode="decimal" required'
         . ' value="' . e($tenant['monthly_fee']) . '"></label>'
-        . '<label>Reference (receipt, transfer or cheque number)<input type="text" name="reference" required minlength="3" maxlength="190"></label>'
+        . '<label>Reference<small class="hint">Receipt, transfer or cheque number</small><input type="text" name="reference" required minlength="3" maxlength="190"></label>'
         . '<button type="submit">Record payment</button></form></section>';
 
     echo '<section class="card"><h2>Status override</h2>'
@@ -583,11 +583,12 @@ if ($tenant) {
 // Details form (add or edit).
 echo '<section class="card"><h2>' . ($tenant ? 'Details' : 'New business') . '</h2>'
     . '<form method="post" action="tenant.php' . ($tenant ? '?id=' . (int)$tenant['id'] : '') . '">' . csrf_field()
-    . '<input type="hidden" name="action" value="save"><input type="hidden" name="id" value="' . ($tenant ? (int)$tenant['id'] : 0) . '">';
+    . '<input type="hidden" name="action" value="save"><input type="hidden" name="id" value="' . ($tenant ? (int)$tenant['id'] : 0) . '">'
+    . '<h3 class="form-sec">Business</h3><div class="bill-grid">';
 if ($tenant) {
-    echo '<label>Short name (identifier, cannot change)<input type="text" value="' . e($tenant['slug']) . '" disabled></label>';
+    echo '<label>Short name<small class="hint">Identifier, cannot change</small><input type="text" value="' . e($tenant['slug']) . '" disabled></label>';
 } else {
-    echo '<label>Short name (lowercase, used by the customer system to identify itself)'
+    echo '<label>Short name<small class="hint">Lowercase; the customer system uses it to identify itself</small>'
         . '<input type="text" name="slug" required maxlength="63" pattern="[a-z0-9][a-z0-9\-]{1,62}" value="' . e($v('slug')) . '"></label>';
 }
 $selType = (string)$v('business_type', 'full_hotel');
@@ -597,36 +598,38 @@ if (!isset(catalog_business_types()[$selType])) {
 $selMods = is_array($form) && isset($form['modules']) ? $form['modules']
     : ($tenant ? catalog_tenant_modules($tenant) : catalog_clean_modules(catalog_business_types()[$selType][1]));
 echo '<label>Business name<input type="text" name="name" required maxlength="190" value="' . e($v('name')) . '"></label>'
-    . '<label>Business type (ticks the usual modules; change them below if needed)<select name="business_type" id="business_type" required>';
+    . '<label>Website domain<small class="hint">Must match what the customer system reports</small><input type="text" name="domain" required maxlength="255" value="' . e($v('domain')) . '"></label>'
+    . '<label>Business type<small class="hint">Ticks the usual modules below</small><select name="business_type" id="business_type" required>';
 foreach (catalog_business_types() as $tk => $tv) {
     echo '<option value="' . e($tk) . '" data-modules="' . e(implode(',', $tv[1])) . '"' . ($selType === $tk ? ' selected' : '') . '>' . e($tv[0]) . '</option>';
 }
-echo '</select></label><fieldset class="modules" id="modules"><legend>Licensed modules (what this business may use)</legend>';
+echo '</select></label></div><fieldset class="modules form-wide" id="modules"><legend>Licensed modules (what this business may use)</legend>';
 foreach (catalog_modules() as $mk => $ml) {
     echo '<label class="check"><input type="checkbox" name="modules[]" value="' . e($mk) . '"' . (in_array($mk, $selMods, true) ? ' checked' : '') . '> ' . e($ml) . '</label>';
 }
 echo '</fieldset>';
-echo '<label>Website domain (must match what the customer system reports)<input type="text" name="domain" required maxlength="255" value="' . e($v('domain')) . '"></label>'
-    . '<label>Plan<input type="text" name="plan" maxlength="60" value="' . e($v('plan')) . '"></label>'
+echo '<h3 class="form-sec">Licence and price</h3><div class="bill-grid">'
+    . '<label>Plan<small class="hint">Name shown on the licence</small><input type="text" name="plan" maxlength="60" value="' . e($v('plan')) . '"></label>'
     . '<label>Monthly fee<input type="text" name="monthly_fee" inputmode="decimal" required value="' . e($v('monthly_fee', '0')) . '"></label>'
     . '<label>Currency<input type="text" name="currency" required maxlength="3" value="' . e($v('currency', 'MWK')) . '"></label>'
-    . (!$tenant ? '<fieldset class="modules"><legend>Free trial (optional)</legend><p class="muted">A trial sets paid until to its last day and uses the '
-        . 'after-trial step-down from Settings. Leave "No free trial" to set paid until yourself.</p>'
+    . '<label>Paid until<small class="hint">Use Record payment to extend it' . (!$tenant ? '; not needed with a free trial' : '') . '</small><input type="date" name="paid_until"' . ($tenant ? ' required' : '') . ' value="' . e($v('paid_until')) . '"></label>'
+    . '<label>Grace days<small class="hint">Banner shown, everything works</small><input type="number" name="grace_days" min="0" max="365" required value="' . e($v('grace_days', billing_setting('default_grace_days'))) . '"></label>'
+    . '<label>Read-only days<small class="hint">View, check-out and export only</small><input type="number" name="readonly_days" min="0" max="365" required value="' . e($v('readonly_days', billing_setting('default_readonly_days'))) . '"></label>'
+    . '</div>'
+    . (!$tenant ? '<h3 class="form-sec">Free trial <span class="muted">(optional)</span></h3><p class="muted">A trial sets paid until to its last day and uses the '
+        . 'after-trial step-down from Settings. Leave "No free trial" to set paid until yourself.</p><div class="bill-grid">'
         . '<label>Length<select name="trial_preset"><option value="">No free trial</option>'
         . implode('', array_map(static fn($p) => '<option value="' . $p . '"' . ((string)($_POST['trial_preset'] ?? '') === (string)$p ? ' selected' : '') . '>' . $p . ' days</option>', TRIAL_PRESETS))
         . '<option value="custom"' . (($_POST['trial_preset'] ?? '') === 'custom' ? ' selected' : '') . '>Custom (below)</option></select></label>'
-        . '<label>Custom days (1-' . TRIAL_MAX_DAYS . ')<input type="number" name="trial_custom" min="1" max="' . TRIAL_MAX_DAYS . '" value="' . e((string)($_POST['trial_custom'] ?? '')) . '"></label></fieldset>' : '')
-    . '<label>Paid until (YYYY-MM-DD; use Record payment to extend' . (!$tenant ? '; not needed with a free trial' : '') . ')<input type="date" name="paid_until"' . ($tenant ? ' required' : '') . ' value="' . e($v('paid_until')) . '"></label>'
-    . '<label>Grace days (banner shown, everything works)<input type="number" name="grace_days" min="0" max="365" required value="' . e($v('grace_days', billing_setting('default_grace_days'))) . '"></label>'
-    . '<label>Read-only days (view, check-out and export only)<input type="number" name="readonly_days" min="0" max="365" required value="' . e($v('readonly_days', billing_setting('default_readonly_days'))) . '"></label>'
-    . '<fieldset class="modules"><legend>Billing contact (invoices, reminders and statements go here)</legend>'
+        . '<label>Custom days (1-' . TRIAL_MAX_DAYS . ')<input type="number" name="trial_custom" min="1" max="' . TRIAL_MAX_DAYS . '" value="' . e((string)($_POST['trial_custom'] ?? '')) . '"></label></div>' : '')
+    . '<h3 class="form-sec">Billing contact</h3><p class="muted">Invoices, reminders and statements go here.</p><div class="bill-grid">'
     . '<label>Contact name<input type="text" name="contact_name" maxlength="120" value="' . e($v('contact_name')) . '"></label>'
-    . '<label>Billing email<input type="email" name="billing_email" maxlength="190" value="' . e($v('billing_email')) . '"></label>'
-    . '<label>Copy to (other emails, separated by commas)<input type="text" name="cc_emails" maxlength="500" value="' . e($v('cc_emails')) . '"></label>'
     . '<label>Phone<input type="text" name="contact_phone" maxlength="60" value="' . e($v('contact_phone')) . '"></label>'
-    . '<label>Billing address (printed on invoices)<textarea name="billing_address" rows="3" maxlength="1000">' . e($v('billing_address')) . '</textarea></label>'
-    . '</fieldset>'
-    . '<label>Notes<textarea name="notes" rows="3" maxlength="2000">' . e($v('notes')) . '</textarea></label>'
+    . '<label>Billing email<input type="email" name="billing_email" maxlength="190" value="' . e($v('billing_email')) . '"></label>'
+    . '<label>Copy to<small class="hint">Other emails, separated by commas</small><input type="text" name="cc_emails" maxlength="500" value="' . e($v('cc_emails')) . '"></label>'
+    . '<label class="span-2">Billing address<small class="hint">Printed on invoices</small><textarea name="billing_address" rows="3" maxlength="1000">' . e($v('billing_address')) . '</textarea></label>'
+    . '<label class="span-2">Notes<small class="hint">Only you see these</small><textarea name="notes" rows="3" maxlength="2000">' . e($v('notes')) . '</textarea></label>'
+    . '</div>'
     . '<button type="submit">' . ($tenant ? 'Save details' : 'Add business') . '</button></form></section>';
 
 if ($tenant) {
@@ -659,7 +662,7 @@ if ($tenant) {
             $isLive = billing_payment_live($p);
             $state = billing_payment_state($p, billing_payment_family($pdo, $p));
             if ($isLive && !empty($p['licence_back_at'])) {
-                $state = trim($state . ' · licence time taken back', ' ·');
+                $state = $state === '' ? 'Licence time taken back' : $state . ' Â· licence time taken back';
             }
             $fix = view_empty();
             if (!empty($p['document_id'])) {

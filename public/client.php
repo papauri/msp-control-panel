@@ -205,20 +205,22 @@ $detailsForm = static function () use ($client, $v): string {
     $active = is_array($GLOBALS['form'] ?? null) ? (($GLOBALS['form']['is_active'] ?? '') === '1') : (!$client || (int)$client['is_active'] === 1);
     $h = '<form method="post" action="client.php' . ($client ? '?id=' . (int)$client['id'] : '?new=1') . '">' . csrf_field()
         . '<input type="hidden" name="action" value="save"><input type="hidden" name="id" value="' . ($client ? (int)$client['id'] : 0) . '">'
-        . '<div class="bill-grid"><label>Kind<select name="kind">';
+        . '<h3 class="form-sec">Who</h3><div class="bill-grid"><label>Kind<select name="kind">';
     foreach (client_kinds() as $k => $l) {
         $h .= '<option value="' . e($k) . '"' . ($v('kind', 'company') === $k ? ' selected' : '') . '>' . e($l) . '</option>';
     }
     $h .= '</select></label>'
-        . '<label>Name (company, or the person\'s full name)<input type="text" name="name" required maxlength="190" value="' . e($v('name')) . '"></label>'
+        . '<label class="span-2">Name<small class="hint">The company, or the person\'s full name</small><input type="text" name="name" required maxlength="190" value="' . e($v('name')) . '"></label>'
+        . '<label>Tax number<small class="hint">Optional</small><input type="text" name="tax_number" maxlength="60" value="' . e($v('tax_number')) . '"></label>'
+        . '</div><h3 class="form-sec">Contact</h3><div class="bill-grid">'
         . '<label>Contact person<input type="text" name="contact_name" maxlength="120" value="' . e($v('contact_name')) . '"></label>'
-        . '<label>Email (invoices and receipts go here)<input type="email" name="email" maxlength="190" value="' . e($v('email')) . '"></label>'
-        . '<label>Copy to (other emails, separated by commas)<input type="text" name="cc_emails" maxlength="500" value="' . e($v('cc_emails')) . '"></label>'
         . '<label>Phone<input type="text" name="phone" maxlength="60" value="' . e($v('phone')) . '"></label>'
-        . '<label>Address (printed on invoices)<textarea name="address" rows="3" maxlength="1000">' . e($v('address')) . '</textarea></label>'
-        . '<label>Tax number<input type="text" name="tax_number" maxlength="60" value="' . e($v('tax_number')) . '"></label>'
-        . '<label>Currency (default on new invoices)<input type="text" name="currency" required maxlength="3" value="' . e($v('currency', billing_setting('default_currency'))) . '"></label>'
-        . '</div><label>Notes (only you see these)<textarea name="notes" rows="3" maxlength="2000">' . e($v('notes')) . '</textarea></label>'
+        . '<label>Email<small class="hint">Invoices and receipts go here</small><input type="email" name="email" maxlength="190" value="' . e($v('email')) . '"></label>'
+        . '<label>Copy to<small class="hint">Other emails, separated by commas</small><input type="text" name="cc_emails" maxlength="500" value="' . e($v('cc_emails')) . '"></label>'
+        . '</div><h3 class="form-sec">Billing</h3><div class="bill-grid">'
+        . '<label class="span-2">Address<small class="hint">Printed on invoices</small><textarea name="address" rows="3" maxlength="1000">' . e($v('address')) . '</textarea></label>'
+        . '<label>Currency<small class="hint">Default on new invoices</small><input type="text" name="currency" required maxlength="3" value="' . e($v('currency', billing_setting('default_currency'))) . '"></label>'
+        . '</div><div class="bill-grid"><label class="span-all">Notes<small class="hint">Only you see these</small><textarea name="notes" rows="3" maxlength="2000">' . e($v('notes')) . '</textarea></label></div>'
         . '<label class="check"><input type="checkbox" name="is_active" value="1"' . ($active ? ' checked' : '') . '> Active (shown in the client list on new invoices)</label>'
         . ($client && $client['tenant_id'] !== null ? '<p class="muted">This client is a hosted business: its name and billing contact are also saved on the business.</p>' : '')
         . '<button type="submit">' . ($client ? 'Save details' : 'Add client') . '</button></form>';
@@ -332,7 +334,7 @@ if (!$payable) {
     foreach ($methods as $mk => $ml) {
         echo '<option value="' . e($mk) . '">' . e($ml) . '</option>';
     }
-    echo '</select></label><label>Reference (receipt, transfer or cheque number)<input type="text" name="reference" required minlength="3" maxlength="190"></label>'
+    echo '</select></label><label>Reference<small class="hint">Receipt, transfer or cheque number</small><input type="text" name="reference" required minlength="3" maxlength="190"></label>'
         . '<button type="submit">Record payment</button></form>';
 }
 echo '</section>';

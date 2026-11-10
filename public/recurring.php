@@ -254,10 +254,10 @@ foreach ($clients as $c) {
         . '>' . e($c['name']) . ($t ? ' · hosted' : '') . '</option>';
 }
 echo '</select></label>'
-    . '<label>Title (shown in the email: "your regular invoice for …")<input type="text" name="title" required maxlength="190" value="' . e($fv('title')) . '"></label>'
+    . '<label>Title<small class="hint">Shown in the email: "your regular invoice for …"</small><input type="text" name="title" required maxlength="190" value="' . e($fv('title')) . '"></label>'
     . '<label>Every (months)<input type="number" name="interval_months" min="1" max="36" required value="' . e($fv('interval_months')) . '"><small class="muted">1 = monthly, 3 = quarterly, 12 = yearly.</small></label>'
     . '<label>Next invoice date<input type="date" name="next_date" required value="' . e($fv('next_date')) . '"><small class="muted">The schedule keeps this day; in a shorter month it uses the last day, then comes back (30 Jan, 28 Feb, 30 Mar). The last day of a month stays the last day.</small></label>'
-    . '<label>End date (optional)<input type="date" name="end_date" value="' . e($fv('end_date')) . '"></label>'
+    . '<label>End date<small class="hint">Optional</small><input type="date" name="end_date" value="' . e($fv('end_date')) . '"></label>'
     . '<label>Currency<input type="text" name="currency" id="currency" required maxlength="3" value="' . e($cur) . '"></label>'
     . '<label>Invoice due after (days)<input type="number" name="due_days" min="0" max="365" value="' . e($fv('due_days')) . '"></label>'
     . '<label>When paid in full, extend the licence by (months)<input type="number" name="extend_months" id="extend_months" min="0" max="60" value="' . e($fv('extend_months') === '' ? '0' : $fv('extend_months')) . '"><small class="muted">Hosted businesses only.</small></label>'
@@ -296,7 +296,7 @@ echo '<label class="inline-label">Months<input type="number" id="sub-months" min
     . '<span class="muted" id="sub-msg" hidden>Choose a hosted business as the client first.</span></div>'
     . '<div class="bill-totals"><p class="grand"><span>Total before tax</span><strong id="t-sub">' . e(billing_money(0, $cur)) . '</strong></p>'
     . '<p class="muted"><span>Profit (yours)</span><strong id="t-profit">' . view_empty() . '</strong></p></div>'
-    . '<label>Notes (printed on each invoice)<textarea name="notes" rows="3" maxlength="2000">' . e($fv('notes')) . '</textarea></label>'
+    . '<label>Notes<small class="hint">Printed on each invoice</small><textarea name="notes" rows="3" maxlength="2000">' . e($fv('notes')) . '</textarea></label>'
     . '<label class="check"><input type="checkbox" name="is_active" value="1"' . ($activeChecked ? ' checked' : '') . '> Active (untick to pause)</label>'
     . '<button type="submit">' . ($rid ? 'Save schedule' : 'Add recurring invoice') . '</button></form>';
 view_foot();
