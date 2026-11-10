@@ -456,74 +456,78 @@ if ($tenant) {
         $sd = trial_step_dates((string)$tenant['trial_until'], (int)$tenant['grace_days'], (int)$tenant['readonly_days']);
         $tLen = !empty($tenant['trial_started']) ? billing_days_between((string)$tenant['trial_started'], (string)$tenant['trial_until']) : 0;
         $tLeft = (int)trial_days_left($tenant, $today);
-        $trialLen = ($tLen > 0 ? $tLen . ' days in total, ' : '') . ($tLeft > 0 ? $tLeft . ' day' . ($tLeft === 1 ? '' : 's') . ' after today' : ($tLeft === 0 ? 'today is the last day' : 'ended'));
         $modeOpts = '';
         foreach (TRIAL_CHANGE_MODES as $mk => $ml) {
             $modeOpts .= '<option value="' . e($mk) . '">' . e($ml) . '</option>';
         }
-        echo '<p>' . view_trial_tag($trialWords) . ' Started ' . e(billing_date((string)$tenant['trial_started'])) . ', last day '
-            . e(billing_date((string)$tenant['trial_until'])) . '. After it: view-only from ' . e(billing_date($sd['read_only_from']))
-            . ', paused from ' . e(billing_date($sd['locked_from'])) . '. Data is never deleted.</p>'
-            . '<div class="bill-grid">'
-            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="js-once">' . $tHidden . '<input type="hidden" name="action" value="trial_change">'
+        // Facts first (one line each), then one tile per action: heading, short help, fields, button (tiles line up).
+        echo '<dl class="facts">'
+            . view_fact('Started', e(billing_date((string)$tenant['trial_started'])))
+            . view_fact('Last day', e(billing_date((string)$tenant['trial_until'])))
+            . view_fact('Length', $tLen > 0 ? e($tLen . ' days') : view_empty())
+            . view_fact('Days left', e($tLeft > 0 ? (string)$tLeft : ($tLeft === 0 ? 'Today is the last day' : 'Ended')))
+            . view_fact('View-only from', e(billing_date($sd['read_only_from'])))
+            . view_fact('Paused from', e(billing_date($sd['locked_from'])))
+            . '</dl><p class="muted facts-note">After the trial nothing is deleted: the business goes view-only, then the staff area pauses.</p>'
+            . '<div class="tools">'
+            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="tool js-once">' . $tHidden . '<input type="hidden" name="action" value="trial_change">'
             . '<input type="hidden" name="once" value="' . e(billing_once_issue('trial_change_' . $tid0)) . '">'
-            . '<h3>Lengthen or shorten</h3><p class="muted">Now ' . e($trialLen) . '. Adding counts from the last day (or from today if it has ended).</p>'
-            . '<label>Change<select name="mode">' . $modeOpts . '</select></label>'
-            . '<label>Days<input type="number" name="days" min="1" max="' . TRIAL_MAX_AHEAD_DAYS . '" required></label>'
+            . '<h3>Lengthen or shorten</h3><p class="muted">Add days, take days off, or set the whole length. Adding counts from the last day.</p>'
+            . '<div class="tool-fields pair"><label>Change<select name="mode">' . $modeOpts . '</select></label>'
+            . '<label>Days<input type="number" name="days" min="1" max="' . TRIAL_MAX_AHEAD_DAYS . '" required></label></div>'
             . '<button type="submit" class="secondary">Change trial</button></form>'
-            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="js-once">' . $tHidden . '<input type="hidden" name="action" value="trial_change">'
+            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="tool js-once">' . $tHidden . '<input type="hidden" name="action" value="trial_change">'
             . '<input type="hidden" name="once" value="' . e(billing_once_issue('trial_change_' . $tid0)) . '"><input type="hidden" name="mode" value="date">'
-            . '<h3>Set the last day</h3><p class="muted">Pick the exact last day of the trial (earlier or later).</p>'
-            . '<label>Last day<input type="date" name="until" required value="' . e(substr((string)$tenant['trial_until'], 0, 10)) . '" min="' . e(status_add_days($today, -1))
-            . '" max="' . e(status_add_days($today, TRIAL_MAX_AHEAD_DAYS)) . '"></label>'
+            . '<h3>Set the last day</h3><p class="muted">Pick the exact last day, earlier or later than now.</p>'
+            . '<div class="tool-fields"><label>Last day<input type="date" name="until" required value="' . e(substr((string)$tenant['trial_until'], 0, 10)) . '" min="' . e(status_add_days($today, -1))
+            . '" max="' . e(status_add_days($today, TRIAL_MAX_AHEAD_DAYS)) . '"></label></div>'
             . '<button type="submit" class="secondary">Set last day</button></form>';
         if ((int)trial_days_left($tenant, $today) >= 0) {
-            echo '<form method="post" action="tenant.php?id=' . $tid0 . '#trial">' . $tHidden . '<input type="hidden" name="action" value="trial_end">'
+            echo '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="tool tool-warn" data-confirm="End this free trial now?">' . $tHidden . '<input type="hidden" name="action" value="trial_end">'
                 . '<h3>End now</h3><p class="muted">Yesterday becomes the last day: view-only starts today, then the staff area pauses.</p>'
-                . '<button type="submit" class="danger">End the trial now</button></form>';
+                . '<div class="tool-fields"></div><button type="submit" class="danger">End the trial now</button></form>';
         }
-        echo '</div>';
         billing_seed_plans($pdo, $adminId); // first use only (locked, audited, once): the usual plans at price 0
         $plans = plan_list($pdo);
         $pct = plan_discount_pct(billing_setting('annual_discount_pct'));
-        echo '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="js-once spaced">' . $tHidden . '<input type="hidden" name="action" value="trial_convert">'
+        echo '</div><div class="tools"><form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="tool tool-wide js-once">' . $tHidden . '<input type="hidden" name="action" value="trial_convert">'
             . '<input type="hidden" name="once" value="' . e(billing_once_issue('trial_convert_' . $tid0)) . '">'
-            . '<h3>Convert to paid</h3><p class="muted">Creates a recurring invoice starting today and its first invoice. The normal grace and read-only days '
-            . '(' . e(billing_setting('default_grace_days')) . ' / ' . e(billing_setting('default_readonly_days')) . ') come back. Paid until moves when the first invoice is paid; '
-            . 'until then the trial\'s last day stays.</p>'
-            . '<label>Plan<select name="plan_id" required><option value="0">This business\'s monthly fee: ' . e(billing_money((float)$tenant['monthly_fee'], (string)$tenant['currency'])) . ' a month</option>';
+            . '<h3>Convert to paid</h3><p class="muted">Makes its recurring invoice (starting today) and the first invoice, and brings back the normal grace and read-only days '
+            . '(' . e(billing_setting('default_grace_days')) . ' / ' . e(billing_setting('default_readonly_days')) . '). Paid until moves when the first invoice is paid; until then the trial carries on.</p>'
+            . '<div class="tool-fields bill-grid"><label class="span-2">Plan<select name="plan_id" required><option value="0">This business\'s monthly fee: ' . e(billing_money((float)$tenant['monthly_fee'], (string)$tenant['currency'])) . ' a month</option>';
         foreach ($plans as $pl) {
             echo '<option value="' . (int)$pl['id'] . '">' . e(plan_label($pl)) . '</option>';
         }
         echo '</select></label>'
-            . '<label class="check"><input type="checkbox" name="yearly" value="1"> Bill a monthly plan once a year (12 months' . ($pct > 0 ? ', ' . e(rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.')) . '% annual discount' : '') . ')</label>'
-            . '<label>First invoice<select name="first_invoice"><option value="draft">Save as a draft (I will check and send it)</option><option value="send">Email it now</option></select></label>'
+            . '<label>First invoice<select name="first_invoice"><option value="draft">Draft: I check and send it</option><option value="send">Email it now</option></select></label>'
             . '<label>Later invoices<select name="send_mode">';
         foreach (recurring_send_modes() as $mk => $ml) {
             echo '<option value="' . e($mk) . '"' . ($mk === 'approve' ? ' selected' : '') . '>' . e($ml) . '</option>';
         }
-        echo '</select></label><button type="submit">Convert to paid</button></form>';
+        echo '</select></label>'
+            . '<label class="check span-all"><input type="checkbox" name="yearly" value="1"> Bill a monthly plan once a year (12 months' . ($pct > 0 ? ', ' . e(rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.')) . '% annual discount' : '') . ')</label>'
+            . '</div><button type="submit">Convert to paid</button></form></div>';
     } elseif (trial_start_error($tenant, trial_has_paid($pdo, $tid0)) === "") { // never for a paid-up business (e.g. paid until 2099)
-        echo '<p class="muted">This business has never paid, so it can start a free trial. The trial sets paid until to its last day; after it the system is '
+        echo '<div class="tools"><form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="tool tool-wide">' . $tHidden . '<input type="hidden" name="action" value="trial_start">'
+            . '<h3>Start a free trial</h3><p class="muted">This business has never paid, so it can have a free trial. Paid until becomes the trial\'s last day; after it the system is '
             . 'view-only for ' . e(billing_setting('trial_readonly_days')) . ' day(s)' . ((int)billing_setting('trial_grace_days') > 0 ? ' after ' . e(billing_setting('trial_grace_days')) . ' grace day(s)' : '')
-            . ', then the staff area pauses (data is never deleted).</p>'
-            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial">' . $tHidden . '<input type="hidden" name="action" value="trial_start">'
-            . $presetSel() . '<button type="submit" class="secondary">Start free trial</button></form>';
+            . ', then the staff area pauses. Data is never deleted.</p>'
+            . '<div class="tool-fields bill-grid">' . $presetSel() . '</div><button type="submit" class="secondary">Start free trial</button></form></div>';
     } else {
         echo '<p class="muted">Not on a free trial' . (!empty($tenant['trial_started']) || trial_has_paid($pdo, $tid0) ? ' (it has had one, or has paid)' : '') . '.</p>';
     }
     if (trial_restart_error($tenant) === '' && trial_start_error($tenant, trial_has_paid($pdo, $tid0)) !== '') {
         // owner 2026-11-10: any business can be put back on a free trial, for any reason
         $paidAhead = substr((string)$tenant['paid_until'], 0, 10) > $today;
-        echo '<details class="spaced"><summary>Put it back on a free trial</summary>'
-            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="js-once spaced" data-confirm="Put this business back on a free trial?">' . $tHidden
+        echo '<details class="spaced"><summary>Put it back on a free trial</summary><div class="tools">'
+            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="tool tool-wide js-once" data-confirm="Put this business back on a free trial?">' . $tHidden
             . '<input type="hidden" name="action" value="trial_restart"><input type="hidden" name="once" value="' . e(billing_once_issue('trial_restart_' . $tid0)) . '">'
-            . '<p class="muted">A new trial starts today with the trial step-down days and the trial emails. '
+            . '<h3>New free trial</h3><p class="muted">Starts today with the trial step-down days and the trial emails. '
             . ($paidAhead ? 'Paid-up time is kept: paid until (' . e(billing_date((string)$tenant['paid_until'])) . ') is never cut back. ' : '')
             . 'Its licence recurring invoices are paused during the trial; convert it again to bill it.</p>'
-            . $presetSel()
-            . '<label>Why<input type="text" name="reason" required minlength="5" maxlength="255" placeholder="Trying the new modules"></label>'
-            . '<button type="submit" class="secondary">Start a new free trial</button></form></details>';
+            . '<div class="tool-fields bill-grid">' . $presetSel()
+            . '<label class="span-2">Why<small class="hint">Kept in the audit log</small><input type="text" name="reason" required minlength="5" maxlength="255" placeholder="Trying the new modules"></label></div>'
+            . '<button type="submit" class="secondary">Start a new free trial</button></form></div></details>';
     }
     echo '</section>';
 
@@ -584,30 +588,32 @@ if ($tenant) {
         . '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="js-once">' . csrf_field()
         . '<input type="hidden" name="action" value="payment"><input type="hidden" name="id" value="' . (int)$tenant['id'] . '">'
         . '<input type="hidden" name="once" value="' . e(billing_once_issue('tenant_pay_' . $tid)) . '">'
-        . '<label>Months paid<input type="number" name="months" min="1" max="60" value="1" required></label>'
-        . '<label>Amount received (' . e($tenant['currency']) . ')<input type="text" name="amount" inputmode="decimal" required'
+        . '<div class="bill-grid"><label>Months paid<input type="number" name="months" min="1" max="60" value="1" required></label>'
+        . '<label>Amount received<small class="hint">' . e($tenant['currency']) . '</small><input type="text" name="amount" inputmode="decimal" required'
         . ' value="' . e($tenant['monthly_fee']) . '"></label>'
-        . '<label>Reference<small class="hint">Receipt, transfer or cheque number</small><input type="text" name="reference" required minlength="3" maxlength="190"></label>'
+        . '<label>Reference<small class="hint">Receipt, transfer or cheque number</small><input type="text" name="reference" required minlength="3" maxlength="190"></label></div>'
         . '<button type="submit">Record payment</button></form></section>';
 
     echo '<section class="card"><h2>Status override</h2>'
         . '<p class="muted">Forces a status regardless of the date, for example to keep a friendly customer active or to lock one at once. '
         . 'An "active" override is lifted if the business cannot reach this panel for over 35 days and the date has passed.</p>';
-    echo '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '">' . csrf_field()
+    echo '<div class="tools"><form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="tool">' . csrf_field()
         . '<input type="hidden" name="action" value="override_set"><input type="hidden" name="id" value="' . (int)$tenant['id'] . '">'
-        . '<label>Force status<select name="override" required>';
+        . '<h3>' . (!empty($tenant['status_override']) ? 'Change the override' : 'Set an override') . '</h3><p class="muted">Pick the status and say why.</p>'
+        . '<div class="tool-fields"><label>Force status<select name="override" required>';
     foreach (status_list() as $s) {
         echo '<option value="' . e($s) . '"' . ($tenant['status_override'] === $s ? ' selected' : '') . '>' . e($s) . '</option>';
     }
-    echo '</select></label><label>Reason (required)<input type="text" name="reason" required minlength="5" maxlength="255"></label>'
+    echo '</select></label><label>Reason<input type="text" name="reason" required minlength="5" maxlength="255"></label></div>'
         . '<button type="submit">Set override</button></form>';
     if (!empty($tenant['status_override'])) {
-        echo '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="spaced">' . csrf_field()
+        echo '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="tool">' . csrf_field()
             . '<input type="hidden" name="action" value="override_clear"><input type="hidden" name="id" value="' . (int)$tenant['id'] . '">'
-            . '<label>Reason for clearing (required)<input type="text" name="reason" required minlength="5" maxlength="255"></label>'
+            . '<h3>Clear the override</h3><p class="muted">The status follows the dates again.</p>'
+            . '<div class="tool-fields"><label>Reason<input type="text" name="reason" required minlength="5" maxlength="255"></label></div>'
             . '<button type="submit" class="secondary">Clear override</button></form>';
     }
-    echo '</section>';
+    echo '</div></section>';
 }
 
 // Details form (add or edit).
@@ -703,18 +709,18 @@ if ($tenant) {
                 $base = '<input type="hidden" name="id" value="' . (int)$tenant['id'] . '"><input type="hidden" name="payment_id" value="' . (int)$p['id'] . '">'
                     . '<input type="hidden" name="once" value="' . $once . '">';
                 $months = (int)$p['months'];
-                $fix = '<details><summary>Void or refund</summary>';
+                $fix = '<details><summary>Void or refund</summary><div class="tools stack">';
                 if ($left >= round((float)$p['amount'], 2) - BILLING_TOLERANCE) {
-                    $fix .= '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="spaced js-once" data-confirm="Void this payment? It stops counting everywhere.">' . csrf_field() . $base
+                    $fix .= '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="tool tool-warn js-once" data-confirm="Void this payment? It stops counting everywhere.">' . csrf_field() . $base
                         . '<input type="hidden" name="action" value="payment_void"><h3>Void: entered by mistake</h3>'
                         . '<p class="muted">The payment stops counting' . ($months > 0 && empty($p['licence_back_at']) ? ' and the ' . $months . ' month' . ($months === 1 ? '' : 's') . ' it added are taken back' : '') . '.</p>'
-                        . '<label>Why<input type="text" name="reason" required minlength="5" maxlength="255" placeholder="Entered twice"></label>'
+                        . '<div class="tool-fields"><label>Why<input type="text" name="reason" required minlength="5" maxlength="255" placeholder="Entered twice"></label></div>'
                         . '<button type="submit" class="danger">Void payment</button></form>';
                 }
-                $fix .= '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="spaced js-once" data-confirm="Record this refund?">' . csrf_field() . $base
+                $fix .= '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="tool tool-warn js-once" data-confirm="Record this refund?">' . csrf_field() . $base
                     . '<input type="hidden" name="action" value="payment_refund"><h3>Refund: money given back</h3>'
                     . '<p class="muted">Up to ' . e(billing_money($left, (string)$p['currency'])) . '. It counts as money out on the day you record it.</p>'
-                    . '<label>Amount given back<input type="text" name="amount" inputmode="decimal" required value="' . e(number_format($left, 2, '.', '')) . '"></label>'
+                    . '<div class="tool-fields"><label>Amount given back<input type="text" name="amount" inputmode="decimal" required value="' . e(number_format($left, 2, '.', '')) . '"></label>'
                     . '<label>Given back by<select name="method" required>';
                 foreach ($methods as $mk => $ml) {
                     $fix .= '<option value="' . e($mk) . '">' . e($ml) . '</option>';
@@ -722,7 +728,7 @@ if ($tenant) {
                 $fix .= '</select></label><label>Reference<input type="text" name="reference" required minlength="3" maxlength="190"></label>'
                     . ($months > 0 && empty($p['licence_back_at']) ? '<label class="check"><input type="checkbox" name="take_back" value="1" checked> Take back the ' . $months . ' month'
                         . ($months === 1 ? '' : 's') . ' it added to paid until</label>' : '')
-                    . '<button type="submit" class="danger">Record refund</button></form></details>';
+                    . '</div><button type="submit" class="danger">Record refund</button></form></div></details>';
             }
             echo '<tr' . (!$isLive ? ' class="muted"' : '') . '><td data-label="Recorded" class="nw">' . e($p['created_at']) . '</td>'
                 . '<td data-label="Amount" class="nw">' . (!$isLive ? '<s>' : '') . e($p['amount']) . ' ' . e($p['currency']) . (!$isLive ? '</s>' : '')
@@ -761,4 +767,6 @@ if ($tenant) {
     }
     echo '</section>';
 }
+// Confirm boxes (data-confirm) and once-only buttons (js-once) on this page's forms.
+echo '<script src="assets/billing.js" defer></script>';
 view_foot();

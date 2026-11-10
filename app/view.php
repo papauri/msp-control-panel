@@ -69,6 +69,12 @@ function view_th(string $name, string $help, string $short = ''): string
 }
 
 // One muted dash for any empty value, on every table.
+// One fact in a <dl class="facts"> strip: a small grey name over its value ($html is already escaped).
+function view_fact(string $name, string $html): string
+{
+    return '<div><dt>' . e($name) . '</dt><dd>' . $html . '</dd></div>';
+}
+
 function view_empty(): string
 {
     return '<span class="muted" title="Nothing recorded">&ndash;</span>';
