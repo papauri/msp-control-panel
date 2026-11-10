@@ -91,9 +91,8 @@ Everything up to commit `5022fe1` is live:
   - The HMS now sends only real permission changes, so the report is much smaller.
   - It records why the staff step stopped (`licence_staff_error`) and sends that as `staff_error` with every check-in.
   - The panel stores it in `cp_tenants.hms_error` and shows it in red on `staff.php`.
-  - **Next:** nudge Rosalyn's and read `staff.php?id=1`. Either the list arrives, or the page shows the exact reason.
-    Alternatively, the owner runs `php scripts/licence-check.php` in Rosalyn's cPanel Terminal, which prints the staff
-    step result.
+  - **Result:** Rosalyn's list arrived (13 staff) at 08:57 DB time, once the smaller report was live. Both hotels now
+    report.
 
 **Next steps:**
 1. After the push, watch each hotel's next check-in: `staff.php?id=1` / `staff.php?id=2` should fill with staff. The
