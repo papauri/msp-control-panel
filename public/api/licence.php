@@ -148,6 +148,9 @@ $payload = [
 // Staff changes queued on the panel (app/hms.php). A fault here never blocks the licence answer.
 try {
     $doneId = isset($in['staff_done_id']) && is_int($in['staff_done_id']) ? max(0, $in['staff_done_id']) : 0;
+    if (isset($in['staff_error']) && is_string($in['staff_error'])) {
+        hms_store_error($pdo, $tenant, $in['staff_error']);
+    }
     $payload += hms_answer_fields($pdo, $tenant, $doneId);
 } catch (Throwable $e) {
     error_log('licence staff commands: ' . $e->getMessage());

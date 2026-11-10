@@ -36,8 +36,8 @@ Everything up to commit `5022fe1` is live:
 - Prices follow the plan.
 - Month ends stay month ends.
 - Tidy form layout and tiled action boxes on the business page.
-- The database has migrations up to **009** applied. 009 holds the HMS staff tables, and the code that uses it is not
-  live yet.
+- HMS staff and permissions from the panel, and modules enforced in the hotels (commit `df258c0` plus the follow-up).
+- The database has migrations up to **010** applied (009: the HMS staff tables; 010: the HMS staff-step error).
 
 ## In progress: HMS staff and modules from the panel (owner 2026-11-10)
 **What the owner asked for:**
@@ -57,7 +57,7 @@ Everything up to commit `5022fe1` is live:
   - `public/staff.php` (the HMS staff page)
   - `public/api/hms-staff.php` (the HMS report endpoint)
   - `migrations/009_hms_staff.sql` (applied to the live DB)
-  - `scripts/tests/hms_test.php` (55 pure / 79 with `--db`)
+  - `scripts/tests/hms_test.php` (54 pure / 81 with `--db`)
   - `public/api/licence.php` (signed `staff_commands`; only ids above the HMS's `staff_done_id`)
   - `public/tenant.php` card
   - Business form: tenants must now tick at least one module besides Finance (`app/tenants.php`)
@@ -77,6 +77,23 @@ Everything up to commit `5022fe1` is live:
   - New-user details are cleaned as on the PMS Users page, and panel usernames are limited to `[A-Za-z0-9._@-]{3,100}`.
   - The licence lock names are per database.
   - The licence ceiling no longer depends on the session still being open.
+
+**Follow-up 2026-11-10, after the push:**
+- **Liwonde (tenant 2):** working. It checked in on the new version, and its staff list (3 staff) and catalogue arrived at
+  08:43 DB time.
+- **Rosalyn's (tenant 1):** checks in on the new version (pms-20261110), but its staff report never reached the panel
+  (no `hms-ip` / `hms-t` rate-limit hit). The code is identical to Liwonde's, so the cause is on Rosalyn's server.
+  Reading Rosalyn's live DB from the laptop was refused by the permission check. Most likely causes:
+  - a ModSecurity request-body limit: Rosalyn's stored a permission row per key per user, so its report is big;
+  - a different `LICENCE_URL` in production;
+  - an exception.
+- **The fix, shipped as the second hotel commit and panel migration 010:**
+  - The HMS now sends only real permission changes, so the report is much smaller.
+  - It records why the staff step stopped (`licence_staff_error`) and sends that as `staff_error` with every check-in.
+  - The panel stores it in `cp_tenants.hms_error` and shows it in red on `staff.php`.
+  - **Next:** nudge Rosalyn's and read `staff.php?id=1`. Either the list arrives, or the page shows the exact reason.
+    Alternatively, the owner runs `php scripts/licence-check.php` in Rosalyn's cPanel Terminal, which prints the staff
+    step result.
 
 **Next steps:**
 1. After the push, watch each hotel's next check-in: `staff.php?id=1` / `staff.php?id=2` should fill with staff. The

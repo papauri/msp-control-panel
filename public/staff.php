@@ -112,6 +112,10 @@ echo '<section class="card"><h2>How changes reach the HMS</h2>'
     . '<form method="post" action="staff.php?id=' . $tid . '" class="spaced">' . $hidden($userId) . '<input type="hidden" name="action" value="refresh">'
     . '<button type="submit" class="secondary">Ask for a fresh staff list now</button></form></section>';
 
+if (!empty($tenant['hms_error'])) {
+    echo '<p class="flash flash-error">The HMS reported a problem with its staff step'
+        . (!empty($tenant['hms_error_at']) ? ' (' . $when((string)$tenant['hms_error_at']) . ')' : '') . ': ' . e($tenant['hms_error']) . '</p>';
+}
 if ($catalog === null) {
     echo '<section class="card"><h2>No staff list yet</h2><p>This HMS has not sent its staff list. That needs the HMS update that adds staff management '
         . '(November 2026) and one check-in after it. Then the list, roles and permissions show here.</p></section>';

@@ -165,6 +165,12 @@ if (in_array('--db', $argv, true)) {
         t_ok('db: wrong key', hms_authenticate($pdo, ['tenant' => 'zz-hms-test', 'domain' => 'hms-test.invalid', 'key' => 'nope-nope-nope']) === null);
         t_ok('db: wrong domain', hms_authenticate($pdo, ['tenant' => 'zz-hms-test', 'domain' => 'evil.invalid', 'key' => 'secret-key-123']) === null);
         t_ok('db: unknown tenant', hms_authenticate($pdo, ['tenant' => 'nobody-here', 'domain' => 'hms-test.invalid', 'key' => 'secret-key-123']) === null);
+        hms_store_error($pdo, tenant_find($pdo, $tid), 'The staff report was not accepted (HTTP 413, 200000 bytes).');
+        $t = tenant_find($pdo, $tid);
+        t_eq('db: a staff-step problem is kept with its time', ['The staff report was not accepted (HTTP 413, 200000 bytes).', true], [$t['hms_error'], !empty($t['hms_error_at'])]);
+        hms_store_error($pdo, $t, '');
+        $t = tenant_find($pdo, $tid);
+        t_eq('db: cleared when the HMS says the step finished', [null, null], [$t['hms_error'], $t['hms_error_at']]);
     } finally {
         $pdo->rollBack();
     }

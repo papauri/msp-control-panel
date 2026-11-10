@@ -478,6 +478,17 @@ function hms_store_report(PDO $pdo, int $tenantId, array $results, ?array $staff
     return $acked;
 }
 
+/** What the HMS says about its staff step in its check-in ('' = the last run finished). Written only when it changes. */
+function hms_store_error(PDO $pdo, array $tenant, string $error): void
+{
+    $error = hms_str($error, 255);
+    if ($error === (string)($tenant['hms_error'] ?? '')) {
+        return;
+    }
+    $pdo->prepare('UPDATE cp_tenants SET hms_error = ?, hms_error_at = ? WHERE id = ?')
+        ->execute([$error !== '' ? $error : null, $error !== '' ? date('Y-m-d H:i:s') : null, (int)$tenant['id']]);
+}
+
 /**
  * The same key and domain check as the licence answer (one password_verify whatever happens, so timing tells nothing).
  * @return array|null the tenant
