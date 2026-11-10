@@ -170,6 +170,9 @@ $pr = recurring_price_items($yl, 'MWK', $cat, null, 15);
 t_eq('discount setting changed to 15 %: label and amount follow', ['Annual discount (15%)', -216000.0], [$pr['items'][1]['item'], $pr['items'][1]['unit_price']]);
 $pr = recurring_price_items($yl, 'MWK', $cat, null, 0);
 t_eq('discount set to 0: the line is left out', 1, count($pr['items']));
+$pr = recurring_price_items($yl, 'MWK', $cat, null, 0, false);
+t_eq('in the editor a 0 discount line stays (saving keeps it for a later discount)', [2, 'annual_discount', 0.0],
+    [count($pr['items']), $pr['items'][1]['follow'] ?? '', $pr['items'][1]['unit_price'] ?? null]);
 $pr = recurring_price_items($yl, 'MWK', [3 => ['is_active' => 0] + $cat[3]], null, 10);
 t_eq('plan switched off: the price last stored is kept', 100000.0, $pr['items'][0]['unit_price']);
 t_eq('plan deleted: the price last stored is kept', 100000.0, recurring_price_items($yl, 'MWK', [], null, 10)['items'][0]['unit_price']);
@@ -581,6 +584,95 @@ try {
     $fig = reports_trials(reports_trial_tenants($pdo), $today, $today, $today);
     t_ok('db: report counts the trials started and converted today', $fig['started'] >= 2 && $fig['converted'] >= 2);
     trials_ending_soon($pdo, $today, 7);
+
+    // ---- Owner 2026-11-10: void and refund (migration 008). Amount paid always = the live payments on the invoice.
+    $paidOk = static function (int $docId) use ($pdo): bool {
+        $d = billing_doc_row($pdo, $docId);
+        $sum = (float)$pdo->query('SELECT COALESCE(SUM(amount), 0) FROM cp_payments WHERE voided_at IS NULL AND document_id = ' . $docId)->fetchColumn();
+        return abs((float)$d['amount_paid'] - $sum) <= BILLING_TOLERANCE;
+    };
+    $docA = (int)$cv['document_id'];
+    $p1 = billing_payment($pdo, (int)$pay['payment_id']);
+    $v = billing_void_payment($pdo, (int)$p1['id'], 'entered twice', 0);
+    $dA = billing_doc_row($pdo, $docA);
+    $p1b = billing_payment($pdo, (int)$p1['id']);
+    t_ok('db: void ok', $v['ok'], $v['error']);
+    t_eq('db: voided invoice payment: sent, nothing paid, licence back where it was', ['sent', 0.0, (string)$p1['paid_until_before'], true, true],
+        [$dA['status'], (float)$dA['amount_paid'], tenant_find($pdo, $tid)['paid_until'], !empty($p1b['voided_at']), !empty($p1b['licence_back_at'])]);
+    t_ok('db: amount paid matches the payments (after void)', $paidOk($docA));
+    t_ok('db: voiding twice refused', !billing_void_payment($pdo, (int)$p1['id'], 'entered twice', 0)['ok']);
+    t_ok('db: void needs a reason', !billing_void_payment($pdo, (int)$p1['id'], 'x', 0)['ok']);
+    t_ok('db: no receipt for a void payment', isset(billing_receipt_parts($pdo, (int)$p1['id'])['error']));
+    t_ok('db: a void payment does not count as "has paid"', !trial_has_paid($pdo, $tid));
+
+    $pay2 = billing_record_payment($pdo, $docA, 540000, 'TRIALS-TEST-2', 'cash', 0);
+    billing_events_clear();
+    $puPaid = tenant_find($pdo, $tid)['paid_until'];
+    t_ok('db: paid again, licence extended again', $pay2['ok'] && $pay2['paid_in_full'] && $puPaid > (string)$p1['paid_until_before']);
+    $rf = billing_refund_payment($pdo, (int)$pay2['payment_id'], 100000, 'cash', 'REFUND-1', false, true, 0);
+    $dA = billing_doc_row($pdo, $docA);
+    t_ok('db: partial refund ok', $rf['ok'], $rf['error']);
+    t_eq('db: partial refund: balance due again, licence taken back, not void', ['sent', 440000.0, (string)billing_payment($pdo, (int)$pay2['payment_id'])['paid_until_before']],
+        [$dA['status'], (float)$dA['amount_paid'], tenant_find($pdo, $tid)['paid_until']]);
+    t_ok('db: amount paid matches the payments (after a refund)', $paidOk($docA));
+    t_eq('db: the refund row', [-100000.0, (int)$pay2['payment_id'], 0], (function ($r) {
+        return [(float)$r['amount'], (int)$r['refund_of'], (int)$r['months']];
+    })(billing_payment($pdo, (int)$rf['refund_id'])));
+    t_ok('db: refunding more than is left refused', !billing_refund_payment($pdo, (int)$pay2['payment_id'], 440000.01, 'cash', 'REFUND-2', false, true, 0)['ok']);
+    t_ok('db: a partly refunded payment cannot be voided', !billing_void_payment($pdo, (int)$pay2['payment_id'], 'entered twice', 0)['ok']);
+    t_ok('db: a refund cannot be refunded', !billing_refund_payment($pdo, (int)$rf['refund_id'], 1, 'cash', 'REFUND-X', false, true, 0)['ok']);
+    $rf2 = billing_refund_payment($pdo, (int)$pay2['payment_id'], 440000, 'cash', 'REFUND-2', false, true, 0);
+    t_eq('db: the rest refunded with "cancel the sale": invoice void, nothing paid', [true, 'void', 0.0],
+        [$rf2['ok'], billing_doc_row($pdo, $docA)['status'], (float)billing_doc_row($pdo, $docA)['amount_paid']]);
+    t_ok('db: amount paid matches the payments (after the full refund)', $paidOk($docA));
+    t_ok('db: licence taken back only once', (int)$pdo->query("SELECT COUNT(*) FROM cp_audit_log WHERE tenant_id = $tid AND action = 'licence_taken_back'")->fetchColumn() === 2);
+
+    // A licence payment (business page) voided after a later one moved paid until on: its months come off today's date.
+    $pdo->prepare("INSERT INTO cp_tenants (slug, name, business_type, modules, domain, plan, monthly_fee, currency, paid_until, grace_days, readonly_days)
+        VALUES (?, 'Trials Pay Lodge', 'full_hotel', ?, ?, 'Gold', '75000.00', 'MWK', '2030-03-31', 14, 14)")->execute([$slug . 'p', json_encode(['pos']), $slug . 'p.example.invalid']);
+    $tid3 = (int)$pdo->lastInsertId();
+    $insP = $pdo->prepare('INSERT INTO cp_payments (tenant_id, admin_id, amount, currency, months, reference, paid_until_before, paid_until_after, created_at)
+        VALUES (?, NULL, ?, \'MWK\', 1, ?, ?, ?, ?)');
+    $insP->execute([$tid3, '75000.00', 'LIC-1', '2030-01-31', '2030-02-28', date('Y-m-d H:i:s')]);
+    $lp1 = (int)$pdo->lastInsertId();
+    $insP->execute([$tid3, '75000.00', 'LIC-2', '2030-02-28', '2030-03-31', date('Y-m-d H:i:s')]);
+    $lv = billing_void_payment($pdo, $lp1, 'wrong business', 0);
+    t_eq('db: licence payment voided after a later one: one month off 31 Mar = 28 Feb', [true, '2030-02-28'], [$lv['ok'], tenant_find($pdo, $tid3)['paid_until']]);
+
+    // Prices follow the plan: the subscription bills the plan's new price; another currency is refused, nothing moves.
+    billing_catalog_save($pdo, $svc, ['category' => 'service', 'sku' => '', 'item' => 'Test support – Monthly', 'description' => '', 'unit_price' => '25000',
+        'unit' => 'month', 'cost_price' => '6000', 'currency' => 'MWK', 'is_active' => 1, 'sort' => 0, 'billing_interval' => 1], 0);
+    $run = recurring_run_one($pdo, (int)$s1['schedule_id'], 0, $today);
+    billing_events_clear();
+    t_eq('db: invoice at the new plan price: 300,000 - 10% + 1,000 = 271,000', [true, 271000.0], [$run['ok'], (float)billing_doc_row($pdo, (int)$run['document_id'])['total']]);
+    billing_catalog_save($pdo, $svc, ['category' => 'service', 'sku' => '', 'item' => 'Test support – Monthly', 'description' => '', 'unit_price' => '25',
+        'unit' => 'month', 'cost_price' => '', 'currency' => 'USD', 'is_active' => 1, 'sort' => 0, 'billing_interval' => 1], 0);
+    $nextBefore = recurring_find($pdo, (int)$s1['schedule_id'])['next_date'];
+    $run = recurring_run_one($pdo, (int)$s1['schedule_id'], 0, $today, true);
+    t_ok('db: plan now in USD on an MWK schedule: no invoice, next date unchanged', !$run['ok'] && strpos($run['error'], 'USD') !== false
+        && recurring_find($pdo, (int)$s1['schedule_id'])['next_date'] === $nextBefore);
+
+    // A schedule set up on the 30th keeps coming back to the 30th.
+    [$ea, $ra] = recurring_validate(['client_id' => (string)$sid, 'title' => 'Day 30', 'interval_months' => '1', 'next_date' => '2026-01-30', 'currency' => 'MWK',
+        'send_mode' => 'draft'], [['qty' => '1', 'item' => 'Support', 'unit_price' => '1000']]);
+    $rA = recurring_save($pdo, $ra, 0);
+    $a1 = recurring_run_one($pdo, $rA, 0, $today);
+    $a2 = recurring_run_one($pdo, $rA, 0, $today);
+    billing_events_clear();
+    t_eq('db: 30 Jan, 28 Feb, 30 Mar (anchor 30)', [30, '2026-02-28', '2026-03-30'], [(int)recurring_find($pdo, $rA)['anchor_day'], $a1['next_date'], $a2['next_date']]);
+
+    // 0 on a free trial = a free month: the trial is longer, still a trial, no payment row.
+    $pdo->prepare("INSERT INTO cp_tenants (slug, name, business_type, modules, domain, plan, monthly_fee, currency, paid_until, grace_days, readonly_days)
+        VALUES (?, 'Trials Free Lodge', 'full_hotel', ?, ?, 'Gold', '75000.00', 'MWK', ?, 14, 14)")->execute([$slug . 'z', json_encode(['pos']), $slug . 'z.example.invalid', $today]);
+    $tid4 = (int)$pdo->lastInsertId();
+    trial_start($pdo, $tid4, 14, 0, $today);
+    billing_events_clear();
+    $t4 = tenant_find($pdo, $tid4);
+    $fm = trial_change($pdo, $tid4, 'date', status_add_months(max((string)$t4['trial_until'], $today), 1), 0, $today, 'Free month (1), ref TEST');
+    $t4b = tenant_find($pdo, $tid4);
+    t_eq('db: free month: trial a month longer, still on, paid until follows, no payment', ['', status_add_months((string)$t4['trial_until'], 1), true, $t4b['trial_until'], 0],
+        [$fm['error'], $t4b['trial_until'], trial_is_on($t4b), $t4b['paid_until'], (int)$pdo->query('SELECT COUNT(*) FROM cp_payments WHERE tenant_id = ' . $tid4)->fetchColumn()]);
+    t_ok('db: free month noted in the audit', strpos((string)$pdo->query("SELECT after_json FROM cp_audit_log WHERE tenant_id = $tid4 AND action = 'trial_extended' ORDER BY id DESC LIMIT 1")->fetchColumn(), 'Free month') !== false);
     t_eq('db: nothing was emailed', [], $sent);
 } finally {
     $pdo->rollBack();

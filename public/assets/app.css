@@ -193,3 +193,4 @@ fieldset#modules legend { grid-column: 1 / -1; }
 @media (min-width: 760px) {
   .bill-grid > .span-2 { grid-column: span 2; }
 }
+table.bill-lines select.in-follow { margin-top: .3rem; max-width: 12rem; font-size: .85rem; padding: .3rem .4rem; }

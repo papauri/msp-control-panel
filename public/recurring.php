@@ -185,7 +185,7 @@ $lineRow = static function (array $l) use ($cur): string {
     $l += ['cost_price' => '', 'catalog_item_id' => '', 'follow' => ''];
     $follow = isset(RECURRING_FOLLOW[$l['follow']]) ? $l['follow'] : '';
     $sel = '<select name="line_follow[]" class="in-follow" title="Where this line\'s price comes from when each invoice is made">'
-        . '<option value="">Fixed: the price typed here</option>';
+        . '<option value="">Fixed price</option>';
     foreach (RECURRING_FOLLOW as $fk => $fl) {
         $sel .= '<option value="' . e($fk) . '"' . ($follow === $fk ? ' selected' : '') . '>' . e($fl) . '</option>';
     }

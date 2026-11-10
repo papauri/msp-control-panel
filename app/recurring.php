@@ -32,9 +32,9 @@ function recurring_anchor_day(string $date): int
  * A line without one of these keeps the price typed on it (fixed).
  */
 const RECURRING_FOLLOW = [
-    'plan' => 'Catalog price (follows the saved item)',
-    'monthly_fee' => 'The business\'s monthly fee',
-    'annual_discount' => 'Annual discount (follows Settings)',
+    'plan' => 'Follows the Catalog',
+    'monthly_fee' => 'Follows the monthly fee',
+    'annual_discount' => 'Follows the discount setting',
 ];
 
 /**
@@ -42,9 +42,11 @@ const RECURRING_FOLLOW = [
  * deleted or switched off keeps the price last stored); 'monthly_fee' lines the business's current monthly fee;
  * 'annual_discount' lines are $pct % off the lines that follow a price (dropped at 0 %), with a cost of 0 when those
  * lines' costs are known. A price in another currency is never used: 'error' says so and the caller makes no invoice.
- * $catalog: [id => catalog row]; $tenant: the hosted business or null. Returns ['items' => [...], 'error' => ''].
+ * $catalog: [id => catalog row]; $tenant: the hosted business or null. $forInvoice: a discount line at 0 is left out of
+ * the invoice; otherwise (the editor, lists, emails) it stays, so saving the schedule keeps it for a discount set later.
+ * Returns ['items' => [...], 'error' => ''].
  */
-function recurring_price_items(array $items, string $currency, array $catalog, ?array $tenant, float $pct): array
+function recurring_price_items(array $items, string $currency, array $catalog, ?array $tenant, float $pct, bool $forInvoice = true): array
 {
     $currency = strtoupper($currency);
     $err = '';
@@ -88,20 +90,23 @@ function recurring_price_items(array $items, string $currency, array $catalog, ?
             continue;
         }
         $d = round($base * $p / 100, 2);
-        if ($d <= BILLING_TOLERANCE) {
+        if ($d <= BILLING_TOLERANCE && $forInvoice) {
             unset($out[$i]);
             continue;
         }
         $out[$i]['qty'] = 1.0;
-        $out[$i]['unit_price'] = -$d;
+        $out[$i]['unit_price'] = $d > BILLING_TOLERANCE ? -$d : 0.0;
         $out[$i]['item'] = 'Annual discount (' . rtrim(rtrim(number_format($p, 2, '.', ''), '0'), '.') . '%)';
         $out[$i]['cost_price'] = $costKnown ? 0.0 : null;
     }
     return ['items' => array_values($out), 'error' => $err];
 }
 
-/** A schedule's lines priced as of now (recurring_price_items with the catalog, the business and the discount setting). */
-function recurring_priced(PDO $pdo, array $r): array
+/**
+ * A schedule's lines priced as of now (recurring_price_items with the catalog, the business and the discount setting).
+ * $forInvoice only when making the invoice (a 0 discount line is left out then).
+ */
+function recurring_priced(PDO $pdo, array $r, bool $forInvoice = false): array
 {
     $items = recurring_items($r);
     $ids = [];
@@ -120,7 +125,7 @@ function recurring_priced(PDO $pdo, array $r): array
     }
     $tenant = !empty($r['tenant_id']) ? tenant_find($pdo, (int)$r['tenant_id']) : null;
     return recurring_price_items($items, (string)$r['currency'], $catalog, $tenant ?: null,
-        function_exists('plan_discount_pct') ? plan_discount_pct(billing_setting('annual_discount_pct')) : 0.0);
+        function_exists('plan_discount_pct') ? plan_discount_pct(billing_setting('annual_discount_pct')) : 0.0, $forInvoice);
 }
 
 // Pure. Is the schedule due on $today: active, next_date reached, and end_date (if any) not before next_date.
@@ -375,7 +380,7 @@ function recurring_run_one(PDO $pdo, int $id, int $adminId, string $today, bool 
             $fail = 'The client of this schedule no longer exists.';
         }
         // today's prices (a plan, the business's monthly fee and the annual discount are followed), before any check
-        $priced = $fail === '' ? recurring_priced($pdo, $r) : ['items' => [], 'error' => ''];
+        $priced = $fail === '' ? recurring_priced($pdo, $r, true) : ['items' => [], 'error' => ''];
         $items = $priced['items'];
         if ($fail === '' && $priced['error'] !== '') {
             $fail = $priced['error'] . ' No invoice was made.';
