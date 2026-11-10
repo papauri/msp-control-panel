@@ -227,13 +227,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set($err === '' ? 'ok' : 'error', $err === '' ? 'Free trial started: ' . $days . ' days. The business picks it up at its next check-in.' : $err);
             back_to($postId);
         } elseif ($action === 'trial_extend' && $postId > 0) {
-            if (!billing_once_consume('trial_extend_' . $postId, (string)($_POST['once'] ?? ''))) {
-                flash_set('info', 'This extension was already made (the form was sent twice).');
+            flash_set('info', 'The free trial form has changed. Nothing was changed: please choose again below.');
+            back_to($postId);
+        } elseif ($action === 'trial_change' && $postId > 0) {
+            // Add days, take days off, set the whole length, or set the last day (owner 2026-11-10: it only ever added)
+            if (!billing_once_consume('trial_change_' . $postId, (string)($_POST['once'] ?? ''))) {
+                flash_set('info', 'This change was already made (the form was sent twice).');
                 back_to($postId);
             }
-            [$days, $err] = trial_days_from_form((string)($_POST['trial_preset'] ?? ''), (string)($_POST['trial_custom'] ?? ''));
-            $err = $err !== '' ? $err : ($days === 0 ? 'Choose how many days to add.' : trial_extend($pdo, $postId, $days, $adminId, $today));
-            flash_set($err === '' ? 'ok' : 'error', $err === '' ? 'Free trial extended by ' . $days . ' days.' : $err);
+            $mode = isset($_POST['mode']) && is_string($_POST['mode']) ? $_POST['mode'] : '';
+            $value = $mode === 'date' ? (string)($_POST['until'] ?? '') : (string)($_POST['days'] ?? '');
+            $r = trial_change($pdo, $postId, $mode, is_string($value) ? $value : '', $adminId, $today);
+            if ($r['error'] === '') {
+                $left = billing_days_between($today, $r['until']);
+                flash_set('ok', 'Free trial changed: the last day is now ' . billing_date($r['until']) . ' ('
+                    . ($left > 0 ? $left . ' day' . ($left === 1 ? '' : 's') . ' after today' : ($left === 0 ? 'today' : 'ended: the step-down starts today')) . ').');
+            } else {
+                flash_set('error', $r['error']);
+            }
             back_to($postId);
         } elseif ($action === 'trial_end' && $postId > 0) {
             $err = trial_end_now($pdo, $postId, $adminId, $today);
@@ -382,13 +393,29 @@ if ($tenant) {
             . e(billing_date((string)$tenant['trial_started'])) . ' to ' . e(billing_date((string)$tenant['trial_until'])) . ').</p>';
     } elseif (trial_is_on($tenant)) {
         $sd = trial_step_dates((string)$tenant['trial_until'], (int)$tenant['grace_days'], (int)$tenant['readonly_days']);
+        $tLen = !empty($tenant['trial_started']) ? billing_days_between((string)$tenant['trial_started'], (string)$tenant['trial_until']) : 0;
+        $tLeft = (int)trial_days_left($tenant, $today);
+        $trialLen = ($tLen > 0 ? $tLen . ' days in total, ' : '') . ($tLeft > 0 ? $tLeft . ' day' . ($tLeft === 1 ? '' : 's') . ' after today' : ($tLeft === 0 ? 'today is the last day' : 'ended'));
+        $modeOpts = '';
+        foreach (TRIAL_CHANGE_MODES as $mk => $ml) {
+            $modeOpts .= '<option value="' . e($mk) . '">' . e($ml) . '</option>';
+        }
         echo '<p>' . view_trial_tag($trialWords) . ' Started ' . e(billing_date((string)$tenant['trial_started'])) . ', last day '
             . e(billing_date((string)$tenant['trial_until'])) . '. After it: view-only from ' . e(billing_date($sd['read_only_from']))
             . ', paused from ' . e(billing_date($sd['locked_from'])) . '. Data is never deleted.</p>'
             . '<div class="bill-grid">'
-            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="js-once">' . $tHidden . '<input type="hidden" name="action" value="trial_extend">'
-            . '<input type="hidden" name="once" value="' . e(billing_once_issue('trial_extend_' . $tid0)) . '">'
-            . '<h3>Extend</h3><p class="muted">Adds days from the later of the last day and today.</p>' . $presetSel() . '<button type="submit" class="secondary">Extend trial</button></form>';
+            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="js-once">' . $tHidden . '<input type="hidden" name="action" value="trial_change">'
+            . '<input type="hidden" name="once" value="' . e(billing_once_issue('trial_change_' . $tid0)) . '">'
+            . '<h3>Lengthen or shorten</h3><p class="muted">Now ' . e($trialLen) . '. Adding counts from the last day (or from today if it has ended).</p>'
+            . '<label>Change<select name="mode">' . $modeOpts . '</select></label>'
+            . '<label>Days<input type="number" name="days" min="1" max="' . TRIAL_MAX_AHEAD_DAYS . '" required></label>'
+            . '<button type="submit" class="secondary">Change trial</button></form>'
+            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="js-once">' . $tHidden . '<input type="hidden" name="action" value="trial_change">'
+            . '<input type="hidden" name="once" value="' . e(billing_once_issue('trial_change_' . $tid0)) . '"><input type="hidden" name="mode" value="date">'
+            . '<h3>Set the last day</h3><p class="muted">Pick the exact last day of the trial (earlier or later).</p>'
+            . '<label>Last day<input type="date" name="until" required value="' . e(substr((string)$tenant['trial_until'], 0, 10)) . '" min="' . e(status_add_days($today, -1))
+            . '" max="' . e(status_add_days($today, TRIAL_MAX_AHEAD_DAYS)) . '"></label>'
+            . '<button type="submit" class="secondary">Set last day</button></form>';
         if ((int)trial_days_left($tenant, $today) >= 0) {
             echo '<form method="post" action="tenant.php?id=' . $tid0 . '#trial">' . $tHidden . '<input type="hidden" name="action" value="trial_end">'
                 . '<h3>End now</h3><p class="muted">Yesterday becomes the last day: view-only starts today, then the staff area pauses.</p>'

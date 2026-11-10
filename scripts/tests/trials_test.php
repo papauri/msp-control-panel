@@ -111,6 +111,35 @@ t_eq('extend an ended trial from today', '2026-12-08', trial_extend_until('2026-
 t_eq('end now = yesterday is the last day', '2026-11-09', trial_end_now_until('2026-11-10'));
 t_eq('end now: step-down starts today', 'read_only', status_compute(['paid_until' => trial_end_now_until('2026-11-10'), 'grace_days' => 0, 'readonly_days' => 3], '2026-11-10'));
 
+// ---------------------------------------------------------------- lengthen / shorten (owner 2026-11-10: it only ever added)
+$tc = ['trial_started' => '2026-11-09', 'trial_until' => '2026-11-23', 'trial_converted_at' => null]; // 14 days, today 2026-11-10
+t_eq('change: add 7 from the last day', ['2026-11-30', ''], trial_change_until($tc, 'add', '7', '2026-11-10'));
+t_eq('change: take 5 off', ['2026-11-18', ''], trial_change_until($tc, 'remove', '5', '2026-11-10'));
+t_eq('change: take off down to yesterday (= ends today) is allowed', ['2026-11-09', ''], trial_change_until($tc, 'remove', '14', '2026-11-10'));
+t_ok('change: taking off more than is left is refused', trial_change_until($tc, 'remove', '15', '2026-11-10')[1] !== '');
+t_ok('change: the refusal says how many days are left', strpos(trial_change_until($tc, 'remove', '30', '2026-11-10')[1], 'Only 14 days left') === 0);
+t_eq('change: 30 days in total = 30 days from the start, not added on', ['2026-12-09', ''], trial_change_until($tc, 'total', '30', '2026-11-10'));
+t_eq('change: 7 days in total shortens a 14-day trial', ['2026-11-16', ''], trial_change_until($tc, 'total', '7', '2026-11-10'));
+t_ok('change: total over the trial maximum refused', trial_change_until($tc, 'total', (string)(TRIAL_MAX_DAYS + 1), '2026-11-10')[1] !== '');
+t_eq('change: set the last day earlier', ['2026-11-15', ''], trial_change_until($tc, 'date', '2026-11-15', '2026-11-10'));
+t_eq('change: set the last day later', ['2026-12-31', ''], trial_change_until($tc, 'date', '2026-12-31', '2026-11-10'));
+t_ok('change: a last day before yesterday refused', trial_change_until($tc, 'date', '2026-11-08', '2026-11-10')[1] !== '');
+t_ok('change: an impossible date refused', trial_change_until($tc, 'date', '2026-02-30', '2026-11-10')[1] !== '');
+t_ok('change: the same last day changes nothing', trial_change_until($tc, 'date', '2026-11-23', '2026-11-10')[1] !== '');
+t_ok('change: more than a year ahead refused', trial_change_until($tc, 'add', '365', '2026-11-10')[1] !== '');
+foreach (['0', '-3', '2.5', 'abc', ''] as $bad) {
+    t_ok('change: bad number "' . $bad . '" refused', trial_change_until($tc, 'add', $bad, '2026-11-10')[1] !== '');
+}
+t_ok('change: unknown mode refused', trial_change_until($tc, 'multiply', '2', '2026-11-10')[1] !== '');
+$ended = ['trial_until' => '2026-11-05'] + $tc;
+t_eq('change: adding to an ended trial counts from today', ['2026-11-17', ''], trial_change_until($ended, 'add', '7', '2026-11-10'));
+t_ok('change: nothing to take off an ended trial', trial_change_until($ended, 'remove', '1', '2026-11-10')[1] !== '');
+t_ok('change: refused once converted', trial_change_until(['trial_converted_at' => '2026-11-20 10:00:00'] + $tc, 'add', '7', '2026-11-10')[1] !== '');
+t_eq('paid until follows the trial', '2026-11-18', trial_paid_until_after('2026-11-23', '2026-11-23', '2026-11-18'));
+t_eq('paid until follows a longer trial', '2026-11-30', trial_paid_until_after('2026-11-23', '2026-11-23', '2026-11-30'));
+t_eq('paid until set by hand is never cut back', '2099-12-31', trial_paid_until_after('2099-12-31', '2026-11-23', '2026-11-18'));
+t_eq('empty paid until takes the trial end', '2026-11-18', trial_paid_until_after('', '2026-11-23', '2026-11-18'));
+
 // ---------------------------------------------------------------- plans and the annual discount
 $monthly = ['id' => 3, 'item' => 'IT Support – Monthly', 'description' => 'Support', 'unit_price' => '100000.00', 'cost_price' => null, 'billing_interval' => 1, 'category' => 'service'];
 $p = plan_lines($monthly, false, 10);
@@ -125,6 +154,33 @@ t_eq('yearly 7.5% of 12,000 = 900', [-900.0, 'Annual discount (7.5%)', 11100.0],
 $p = plan_lines(['unit_price' => '33333.33'] + $monthly, true, 12.5);
 t_eq('yearly 12.5% of 399,999.96: discount 50,000.00 (rounded to 2 dp)', [399999.96, 349999.96], [billing_calc_totals([$p['lines'][0]], 0, 0)['total'], billing_calc_totals($p['lines'], 0, 0)['total']]);
 t_eq('yearly with no discount: no discount line', 1, count(plan_lines($monthly, true, 0)['lines']));
+
+// ---------------------------------------------------------------- payment audit 2026-11-10
+$costed = ['cost_price' => '60000.00'] + $monthly;
+$p = plan_lines($costed, true, 10);
+t_eq('annual discount line is a known zero cost (profit counts it)', 0.0, $p['lines'][1]['cost_price']);
+t_eq('yearly profit: 1,080,000 - 720,000 = 360,000', 360000.0, billing_profit(billing_calc_totals($p['lines'], 0, 0)['items'])['profit']);
+$pu = plan_lines($monthly, true, 10); // no cost price on the plan
+$bp = billing_profit(billing_calc_totals($pu['lines'], 0, 0)['items']);
+t_eq('uncosted plan billed yearly: discount line stays unknown too, so no negative profit', [null, false, 0.0], [$pu['lines'][1]['cost_price'], $bp['complete'], $bp['profit']]);
+t_eq('a priced plan can be billed', '', plan_price_problem($monthly));
+t_ok('a plan at 0 cannot be billed (it would give the licence away)', plan_price_problem(['unit_price' => '0.00'] + $monthly) !== '');
+t_ok('a plan at 0.004 counts as 0', plan_price_problem(['unit_price' => '0.004'] + $monthly) !== '');
+$rIn = ['client_id' => '1', 'title' => 'Licence', 'interval_months' => '1', 'next_date' => '2026-11-10', 'end_date' => '', 'currency' => 'MWK',
+    'due_days' => '', 'extend_months' => '1', 'send_mode' => 'auto', 'notes' => ''];
+$zero = [['qty' => '1', 'item' => 'PMS licence | Monthly', 'unit_price' => '0.00']];
+[$e1] = recurring_validate($rIn, $zero);
+t_ok('schedule: a 0 total that extends a licence is refused', (bool)array_filter($e1, static fn($m) => strpos($m, 'must cost something') !== false));
+[$e2] = recurring_validate(['extend_months' => '0'] + $rIn, $zero);
+t_ok('schedule: a 0 total that extends nothing is allowed', !array_filter($e2, static fn($m) => strpos($m, 'must cost something') !== false));
+[$e3, $r3] = recurring_validate($rIn, [['qty' => '1', 'item' => 'Licence', 'unit_price' => '75000']], 'MWK', '14');
+t_eq('schedule: priced, due days from the setting', [[], 14], [$e3, $r3['due_days']]);
+t_eq('amounts that fit', '', billing_amount_problem(billing_calc_totals([['qty' => 1, 'unit_price' => 9999999999.99]], 0, 0)));
+t_ok('a line above the payment column limit is refused', billing_amount_problem(billing_calc_totals([['qty' => 2, 'unit_price' => 9999999999.99]], 0, 0)) !== '');
+t_ok('tax pushing the total over the limit is refused', billing_amount_problem(billing_calc_totals([['qty' => 1, 'unit_price' => 9999999999.99]], 0, 16.5)) !== '');
+[$e4] = billing_doc_validate(['kind' => 'invoice', 'customer_name' => 'X', 'issue_date' => '2026-11-10', 'due_date' => '2026-11-17', 'currency' => 'MWK',
+    'discount' => '0', 'tax_rate' => '0', 'extend_months' => '0'], [['qty' => '1000', 'item' => 'Big', 'unit_price' => '99999999999']]);
+t_ok('invoice editor refuses an amount the payments table cannot hold', (bool)array_filter($e4, static fn($m) => strpos($m, 'too large') !== false));
 t_eq('a quarterly plan is never turned into yearly', [3, 1, 1.0], (function ($p) {
     return [$p['interval'], count($p['lines']), $p['lines'][0]['qty']];
 })(plan_lines(['billing_interval' => 3] + $monthly, true, 10)));
@@ -316,7 +372,11 @@ try {
     t_ok('db: second start refused', trial_start($pdo, $tid, 7, 0, $today) !== '');
     t_eq('db: extended by 7', '', trial_extend($pdo, $tid, 7, 0, $today));
     t_eq('db: new end', status_add_days($today, 21), tenant_find($pdo, $tid)['trial_until']);
-    t_ok('db: audited', (int)$pdo->query("SELECT COUNT(*) FROM cp_audit_log WHERE tenant_id = " . $tid . " AND action IN ('trial_started','trial_extended')")->fetchColumn() === 2);
+    $sh = trial_change($pdo, $tid, 'remove', '7', 0, $today);
+    t_eq('db: shortened by 7', ['', status_add_days($today, 14)], [$sh['error'], tenant_find($pdo, $tid)['trial_until']]);
+    t_eq('db: paid until followed it', status_add_days($today, 14), tenant_find($pdo, $tid)['paid_until']);
+    t_eq('db: set 21 days in total again', '', trial_change($pdo, $tid, 'total', '21', 0, $today)['error']);
+    t_ok('db: audited', (int)$pdo->query("SELECT COUNT(*) FROM cp_audit_log WHERE tenant_id = " . $tid . " AND action IN ('trial_started','trial_extended','trial_shortened')")->fetchColumn() === 4);
 
     // The licence payload fields, as api/licence.php builds them.
     $row = tenant_find($pdo, $tid);

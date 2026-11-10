@@ -1,7 +1,9 @@
 <?php
 // Sales reports (owner 2026-11-09, BILLING.md Part 2, agent REPORTS). READ-ONLY: every query here is a SELECT.
-// Money rules: invoices count only when sent or paid (draft and void never); collected = payments recorded against an
-// invoice (cp_payments.document_id set); outstanding / overdue / aged debt = balances of sent invoices as of today;
+// Money rules: invoices count only when sent or paid (draft and void never); collected = every payment recorded in the
+// period: against an invoice, and licence payments recorded on a business page without one (2026-11-10, so Collected is
+// all cash received; such a payment is only allowed while no licence invoice is open, so nothing counts twice);
+// outstanding / overdue / aged debt = balances of sent invoices as of today;
 // profit = sum of (line_total - qty x cost_price) over lines whose cost_price is known (NULL = unknown, 0.00 = known,
 // zero cost), flagged "partial" when some lines have no cost. Different currencies are never added together: every
 // total is grouped by currency. Client name: the document's client, else the client linked to its business, else the
@@ -131,7 +133,33 @@ function reports_sum_by_currency(array $rows, string $field, string $curField = 
  */
 function reports_profit(array $lines): array
 {
+    // The invoice's own discount (doc_discount, once per document_id) comes off revenue; off profit too when every line
+    // of that invoice has a cost, exactly as billing_profit() does on the document page.
+    $docs = [];
+    foreach ($lines as $l) {
+        $id = (int)($l['document_id'] ?? 0);
+        if ($id <= 0) {
+            continue;
+        }
+        $docs[$id] = $docs[$id] ?? ['currency' => strtoupper((string)($l['currency'] ?? '')), 'discount' => round((float)($l['doc_discount'] ?? 0), 2), 'unknown' => 0];
+        if (!reports_cost_known($l)) {
+            $docs[$id]['unknown']++;
+        }
+    }
     $out = [];
+    foreach ($docs as $d) {
+        if (abs($d['discount']) <= reports_tol()) {
+            continue;
+        }
+        $c = $d['currency'];
+        $p = $out[$c] ?? ['revenue' => 0.0, 'costed_revenue' => 0.0, 'cost' => 0.0, 'profit' => 0.0, 'lines' => 0, 'lines_without_cost' => 0];
+        $p['revenue'] = round($p['revenue'] - $d['discount'], 2);
+        if ($d['unknown'] === 0) {
+            $p['costed_revenue'] = round($p['costed_revenue'] - $d['discount'], 2);
+            $p['profit'] = round($p['profit'] - $d['discount'], 2);
+        }
+        $out[$c] = $p;
+    }
     foreach ($lines as $l) {
         $c = strtoupper((string)($l['currency'] ?? ''));
         $p = $out[$c] ?? ['revenue' => 0.0, 'costed_revenue' => 0.0, 'cost' => 0.0, 'profit' => 0.0, 'lines' => 0, 'lines_without_cost' => 0];
@@ -230,9 +258,6 @@ function reports_cards(array $invoices, array $payments, array $open, array $lin
         $out[$c]['invoices']++;
     }
     foreach ($payments as $p) {
-        if (empty($p['document_id'])) {
-            continue;
-        }
         $c = strtoupper((string)$p['currency']);
         $out[$c] = $out[$c] ?? $blank;
         $out[$c]['collected'] = round($out[$c]['collected'] + (float)$p['amount'], 2);
@@ -282,9 +307,6 @@ function reports_by_month(array $invoices, array $payments, array $lines): array
         $rows[$k]['invoiced'] = round($rows[$k]['invoiced'] + (float)$d['total'], 2);
     }
     foreach ($payments as $p) {
-        if (empty($p['document_id'])) {
-            continue;
-        }
         $k = $row(substr((string)$p['created_at'], 0, 7), strtoupper((string)$p['currency']));
         $rows[$k]['collected'] = round($rows[$k]['collected'] + (float)$p['amount'], 2);
     }
@@ -327,9 +349,6 @@ function reports_by_client(array $invoices, array $payments): array
         }
     }
     foreach ($payments as $p) {
-        if (empty($p['document_id'])) {
-            continue;
-        }
         $k = $row($p, strtoupper((string)$p['currency']));
         $rows[$k]['collected'] = round($rows[$k]['collected'] + (float)$p['amount'], 2);
     }
@@ -427,7 +446,7 @@ function reports_lines(PDO $pdo, string $from, string $to): array
 {
     $st = $pdo->prepare(
         "SELECT i.id, i.document_id, i.catalog_item_id, i.sort, i.qty, i.item, i.description, i.unit_price, i.cost_price, i.line_total,
-                d.number, d.issue_date, d.currency, d.status,
+                d.number, d.issue_date, d.currency, d.status, d.discount AS doc_discount,
                 COALESCE(c1.id, c2.id) AS client_ref, COALESCE(c1.name, c2.name, d.customer_name) AS client_name,
                 cat.category, cat.sku
          FROM cp_document_items i
@@ -442,7 +461,8 @@ function reports_lines(PDO $pdo, string $from, string $to): array
     return $st->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// Payments recorded against an invoice in the period (that is what "collected" means).
+// Every payment recorded in the period (that is what "collected" means): against an invoice, or a licence payment
+// recorded on a business page (document_id NULL, number NULL).
 function reports_payments(PDO $pdo, string $from, string $to): array
 {
     $end = gmdate('Y-m-d', gmmktime(0, 0, 0, (int)substr($to, 5, 2), (int)substr($to, 8, 2) + 1, (int)substr($to, 0, 4)));
@@ -451,12 +471,12 @@ function reports_payments(PDO $pdo, string $from, string $to): array
                 COALESCE(c1.id, c3.id, c2.id) AS client_ref,
                 COALESCE(c1.name, c3.name, c2.name, d.customer_name, t.name, '') AS client_name
          FROM cp_payments p
-         JOIN cp_documents d ON d.id = p.document_id
+         LEFT JOIN cp_documents d ON d.id = p.document_id
          LEFT JOIN cp_clients c1 ON c1.id = p.client_id
          LEFT JOIN cp_clients c3 ON c3.id = d.client_id
          LEFT JOIN cp_clients c2 ON c2.tenant_id = COALESCE(p.tenant_id, d.tenant_id)
          LEFT JOIN cp_tenants t ON t.id = COALESCE(p.tenant_id, d.tenant_id)
-         WHERE p.document_id IS NOT NULL AND p.created_at >= ? AND p.created_at < ?
+         WHERE p.created_at >= ? AND p.created_at < ?
          ORDER BY p.created_at, p.id"
     );
     $st->execute([$from . ' 00:00:00', $end . ' 00:00:00']);
@@ -560,7 +580,7 @@ function reports_sheet(string $which, array $data, array $extra = []): ?array
         case 'payments':
             $cols = [$d('Date'), $s('Invoice no.', 12), $s('Client', 30), $s('Currency', 9), $m('Amount'), $s('Method', 14), $s('Reference', 30)];
             foreach ($data['payments'] as $r) {
-                $rows[] = [$r['created_at'], $r['number'], $r['client_name'], $r['currency'], $r['amount'], $r['method'], $r['reference']];
+                $rows[] = [$r['created_at'], $r['number'] ?? 'Licence payment', $r['client_name'], $r['currency'], $r['amount'], $r['method'], $r['reference']];
             }
             break;
         case 'quotes':

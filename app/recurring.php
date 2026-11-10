@@ -28,7 +28,7 @@ function recurring_is_due(array $r, string $today): bool
  * Pure. Validates a schedule form and its lines (billing_lines_validate). Returns [errors, clean]; clean['items'] is
  * the list stored in items_json. client_id must be a positive id (its existence is checked by recurring_save).
  */
-function recurring_validate(array $in, array $lines, string $defaultCurrency = 'MWK'): array
+function recurring_validate(array $in, array $lines, string $defaultCurrency = 'MWK', string $defaultDueDays = '7'): array
 {
     $err = [];
     $s = static function ($k, int $max) use ($in): string {
@@ -76,7 +76,7 @@ function recurring_validate(array $in, array $lines, string $defaultCurrency = '
         $err[] = 'Currency must be a 3-letter code such as MWK.';
     }
     if ($r['due_days'] === '') {
-        $r['due_days'] = '7';
+        $r['due_days'] = ctype_digit($defaultDueDays) ? $defaultDueDays : '7';
     }
     if (!ctype_digit($r['due_days']) || (int)$r['due_days'] > 365) {
         $err[] = 'Due after must be a whole number of days from 0 to 365.';
@@ -99,6 +99,12 @@ function recurring_validate(array $in, array $lines, string $defaultCurrency = '
     $t = billing_calc_totals($items, 0, 0);
     if ($t['total'] < -BILLING_TOLERANCE) {
         $err[] = 'The total cannot be below zero.';
+    } elseif ($r['extend_months'] > 0 && $items && $t['total'] <= BILLING_TOLERANCE) {
+        // a free invoice is paid the moment it is sent, so it would extend the licence for nothing
+        $err[] = 'An invoice that extends a licence must cost something: these lines total 0. Set the prices, or set Extend licence by to 0.';
+    }
+    if (($big = billing_amount_problem($t)) !== '') {
+        $err[] = $big;
     }
     $r['items'] = array_map(static fn($it) => ['qty' => $it['qty'], 'item' => $it['item'], 'description' => $it['description'],
         'unit_price' => $it['unit_price'], 'cost_price' => $it['cost_price'], 'catalog_item_id' => $it['catalog_item_id']], $items);
@@ -236,6 +242,12 @@ function recurring_run_one(PDO $pdo, int $id, int $adminId, string $today, bool 
         $items = $fail === '' ? recurring_items($r) : [];
         if ($fail === '' && !$items) {
             $fail = 'This schedule has no lines.';
+        }
+        if ($fail === '' && (int)$r['extend_months'] > 0) {
+            $chk = billing_calc_totals(array_map(static fn($it) => ['qty' => (float)($it['qty'] ?? 1), 'unit_price' => (float)($it['unit_price'] ?? 0)], $items), 0, 0);
+            if ($chk['total'] <= BILLING_TOLERANCE) {
+                $fail = 'This schedule extends a licence but its lines total 0, so no invoice was made (it would give the licence away). Set its prices.';
+            }
         }
         if ($fail !== '') {
             if ($own) {

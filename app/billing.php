@@ -3,6 +3,19 @@
 // Contract: BILLING.md. Nothing runs at include time. Money is rounded to 2 dp and compared with BILLING_TOLERANCE.
 
 const BILLING_TOLERANCE = 0.005;
+// The largest amount any invoice, line or total may reach: payments are stored in DECIMAL(12,2), and the database does
+// not refuse a bigger number (no strict mode), it would cut it short and the books would no longer add up.
+const BILLING_MAX_AMOUNT = 9999999999.99;
+
+/** Pure. '' when every amount of these totals (billing_calc_totals) fits, else the problem in words. */
+function billing_amount_problem(array $t): string
+{
+    $big = abs((float)($t['subtotal'] ?? 0)) > BILLING_MAX_AMOUNT || abs((float)($t['total'] ?? 0)) > BILLING_MAX_AMOUNT;
+    foreach ((array)($t['items'] ?? []) as $it) {
+        $big = $big || abs((float)($it['line_total'] ?? 0)) > BILLING_MAX_AMOUNT;
+    }
+    return $big ? 'That amount is too large: no line or total may be more than ' . number_format(BILLING_MAX_AMOUNT, 2) . '.' : '';
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Automation hooks (Part 2). Events are queued and fired only after the transaction that caused them has committed:
@@ -754,6 +767,9 @@ function billing_doc_validate(array $in, array $lines): array
     }
     if ($t['total'] < -BILLING_TOLERANCE) {
         $err[] = 'The total cannot be below zero.';
+    }
+    if (($big = billing_amount_problem($t)) !== '') {
+        $err[] = $big;
     }
     return [$err, $doc, $t['items']];
 }

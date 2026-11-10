@@ -59,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $in = $_POST;
             $in['is_active'] = $s('is_active') === '1' ? '1' : '0';
             $lines = rec_posted_lines();
-            [$errors, $r] = recurring_validate($in, $lines, billing_setting('default_currency'));
+            [$errors, $r] = recurring_validate($in, $lines, billing_setting('default_currency'), billing_setting('invoice_due_days'));
             // A past date would make the daily run catch up one invoice a day (each sent, if set to send automatically).
             $prevNext = $postId > 0 ? (string)(recurring_find($pdo, $postId)['next_date'] ?? '') : '';
             if (!$errors && $r['next_date'] < $today && $r['next_date'] !== $prevNext) {

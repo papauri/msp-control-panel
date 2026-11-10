@@ -92,7 +92,7 @@ view_head('Sales and billing guide');
     <li>Its staff see <strong>"Free trial: N days left"</strong> in the last 7 days. The panel's lists show <em>Free trial &ndash; N days left</em>.</li>
     <li>Emails go by themselves: a welcome to the trial, reminders 7, 3 and 1 days before the end (with what it costs to continue), and on the day after the end "your free trial has ended". Each can be switched on <strong>Automations</strong>.</li>
     <li>After the last day it does not stop at once: 0 grace days, then 3 days view-only (they can still look and export), then the staff area locks. The guest website keeps working and no data is ever deleted. Change those days in <strong>Settings</strong> (Grace / Read-only days after a trial).</li>
-    <li><strong>Extend trial</strong> by any number of days, or <strong>End the trial now</strong>.</li>
+    <li><strong>Lengthen or shorten</strong> the trial: add days, take days off, make the whole trial a set number of days, or <strong>Set the last day</strong> to an exact date. <strong>End the trial now</strong> stops it today.</li>
     <li><strong>Convert to paid</strong>: pick a plan (monthly or yearly). This makes their recurring invoice and the first invoice, gives the business the normal step-down days (Settings &rsaquo; Normal grace / read-only days, 14 and 14), and sends a thank-you. The lock lifts as soon as the first invoice is paid. A payment recorded on the business page during a trial also ends the trial.</li>
 </ol>
 <p><strong>Billing</strong> board: trials ending in the next 7 days. <strong>Reports</strong>: trials started, converted and lost, and the conversion rate.</p>
@@ -121,7 +121,7 @@ view_head('Sales and billing guide');
 <h2 id="reports">11. Reports and Excel</h2>
 <ul>
     <li><strong>Reports</strong>: pick the period (this month, last month, this year, or your own dates).</li>
-    <li>Cards per currency: invoiced, collected, outstanding, overdue and profit (where you entered cost prices; "partial" when some lines have none).</li>
+    <li>Cards per currency: invoiced, collected (every payment received, licence payments on a business page included), outstanding, overdue and profit (where you entered cost prices; "partial" when some lines have none).</li>
     <li><strong>Aged debt</strong>: what each client owes, split into current, 1-30, 31-60, 61-90 and over 90 days late. Chase from the right.</li>
     <li>Sales by month, by client, by category and by product, and the list of payments.</li>
     <li>Every table has <strong>Export to Excel</strong>; <strong>Export everything</strong> gives one workbook with a sheet each (invoices, invoice lines, payments, quotations, clients, aged debt, sales by month, by product). Every export is written in the audit log.</li>

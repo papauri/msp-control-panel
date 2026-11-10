@@ -116,12 +116,20 @@ t_eq('profit EUR: zero-cost-free, complete', false, $pr['EUR']['partial']);
 $z = reports_profit([['currency' => 'MWK', 'qty' => 1, 'line_total' => 10, 'cost_price' => '0.00']]);
 t_eq('zero cost is known, not partial', [10.0, false, true], [$z['MWK']['profit'], $z['MWK']['partial'], $z['MWK']['known']]);
 $u = reports_profit([['currency' => 'MWK', 'qty' => 1, 'line_total' => 10, 'cost_price' => null]]);
+// The invoice's own discount, as on the document page (billing_profit): off revenue always, off profit when fully costed.
+$dl = [['document_id' => 9, 'doc_discount' => '10000.00', 'currency' => 'MWK', 'qty' => 1, 'line_total' => 100000, 'cost_price' => '60000']];
+$dp = reports_profit($dl);
+t_eq('discount: profit 100,000 - 60,000 - 10,000', [90000.0, 30000.0], [$dp['MWK']['revenue'], $dp['MWK']['profit']]);
+t_eq('discount: same as the document page', billing_profit([['qty' => 1, 'line_total' => 100000, 'cost_price' => '60000']], 10000)['profit'], $dp['MWK']['profit']);
+$dl2 = array_merge($dl, [['document_id' => 9, 'doc_discount' => '10000.00', 'currency' => 'MWK', 'qty' => 1, 'line_total' => 5000, 'cost_price' => null]]);
+$dp2 = reports_profit($dl2);
+t_eq('discount: counted once per invoice, kept out of profit when a line has no cost', [95000.0, 40000.0, true], [$dp2['MWK']['revenue'], $dp2['MWK']['profit'], $dp2['MWK']['partial']]);
 t_eq('all unknown: not known, profit 0', [false, true, 0.0], [$u['MWK']['known'], $u['MWK']['partial'], $u['MWK']['profit']]);
 t_eq('profit note partial', 'Partial: 1 line(s) without cost', reports_profit_note($pr['MWK']));
 t_eq('profit note none', 'No cost prices', reports_profit_note($u['MWK']));
 t_eq('profit note complete', '', reports_profit_note($pr['EUR']));
 
-// Payments: only those against an invoice are collected.
+// Payments: every payment is collected, licence payments without an invoice too (2026-11-10).
 $pay = [
     ['id' => 1, 'document_id' => 1, 'amount' => '2000.00', 'currency' => 'MWK', 'created_at' => '2026-11-05 10:00:00', 'client_ref' => 1, 'client_name' => 'Liwonde Sun Hotel', 'number' => '170134', 'method' => 'bank', 'reference' => 'TT1'],
     ['id' => 2, 'document_id' => 3, 'amount' => '100.00', 'currency' => 'EUR', 'created_at' => '2026-10-20 09:00:00', 'client_ref' => 1, 'client_name' => 'Liwonde Sun Hotel', 'number' => '170136', 'method' => 'bank', 'reference' => 'TT2'],
@@ -133,7 +141,7 @@ $cards = reports_cards($inv, $pay, $open, $lines, $today);
 t_eq('cards: currencies', ['EUR', 'MWK'], array_keys($cards));
 t_eq('cards MWK invoiced (sent+paid only)', 702060.4, $cards['MWK']['invoiced']);
 t_eq('cards MWK invoices count', 5, $cards['MWK']['invoices']);
-t_eq('cards MWK collected (no licence payment, 0.1+0.2)', 2000.3, $cards['MWK']['collected']);
+t_eq('cards MWK collected (with the 777 licence payment, 0.1+0.2)', 2777.3, $cards['MWK']['collected']);
 t_eq('cards EUR collected', 100.0, $cards['EUR']['collected']);
 t_eq('cards MWK outstanding', 700050.1, $cards['MWK']['outstanding']);
 t_eq('cards MWK overdue (due today is not overdue)', 100050.1, $cards['MWK']['overdue']);
@@ -150,7 +158,7 @@ foreach ($months as $r) {
 t_eq('months: keys sorted, currencies apart', ['2026-06 EUR', '2026-09 MWK', '2026-10 EUR', '2026-10 MWK', '2026-11 MWK'], array_keys($m));
 t_eq('months: Nov MWK invoiced excludes draft/void', 60.30, round($m['2026-11 MWK']['invoiced'], 2));
 t_eq('months: Nov MWK invoices', 3, $m['2026-11 MWK']['invoices']);
-t_eq('months: Nov MWK collected', 2000.3, $m['2026-11 MWK']['collected']);
+t_eq('months: Nov MWK collected (licence payment included)', 2777.3, $m['2026-11 MWK']['collected']);
 t_eq('months: Nov MWK profit partial', [190.0, true], [$m['2026-11 MWK']['profit'], $m['2026-11 MWK']['partial']]);
 t_eq('months: Oct EUR collected + profit', [100.0, 0.15], [$m['2026-10 EUR']['collected'], $m['2026-10 EUR']['profit']]);
 t_eq('months: Jun EUR invoiced', 500.0, $m['2026-06 EUR']['invoiced']);
@@ -162,7 +170,7 @@ foreach ($bc as $r) {
     $k[$r['client'] . ' ' . $r['currency']] = $r;
 }
 t_eq('by client: rows, largest invoiced first per currency', ['Liwonde Sun Hotel EUR', 'Liwonde Sun Hotel MWK', 'Walk-in customer MWK', 'Hardware buyer MWK'], array_keys($k));
-t_eq('by client: Liwonde MWK', [2, 702000.1, 700000.1, 2000.0], [$k['Liwonde Sun Hotel MWK']['invoices'], $k['Liwonde Sun Hotel MWK']['invoiced'], $k['Liwonde Sun Hotel MWK']['balance'], $k['Liwonde Sun Hotel MWK']['collected']]);
+t_eq('by client: Liwonde MWK', [2, 702000.1, 700000.1, 2777.0], [$k['Liwonde Sun Hotel MWK']['invoices'], $k['Liwonde Sun Hotel MWK']['invoiced'], $k['Liwonde Sun Hotel MWK']['balance'], $k['Liwonde Sun Hotel MWK']['collected']]);
 t_eq('by client: Hardware buyer (draft/void excluded, paid balance 0)', [2, 10.3, 0.0, 0.3], [$k['Hardware buyer MWK']['invoices'], round($k['Hardware buyer MWK']['invoiced'], 2), $k['Hardware buyer MWK']['balance'], $k['Hardware buyer MWK']['collected']]);
 
 // Client-name fallback grouping: same id groups even with different names; no id groups by name (case-insensitive).
@@ -188,7 +196,7 @@ t_eq('categories: keys', ['EUR Hardware', 'MWK Hardware', 'MWK Not a saved item'
 t_eq('categories: MWK hardware', [2, 300.0, 140.0], [$c['MWK Hardware']['lines'], $c['MWK Hardware']['revenue'], $c['MWK Hardware']['profit']]);
 
 // Sheets: shape and values for the Excel exports.
-$data = ['today' => $today, 'invoices' => array_values(array_filter($inv, 'reports_counts')), 'payments' => array_values(array_filter($pay, static fn($p) => $p['document_id'] !== null)),
+$data = ['today' => $today, 'invoices' => array_values(array_filter($inv, 'reports_counts')), 'payments' => $pay,
     'lines' => array_map(static fn($l) => $l + ['number' => '170134', 'client_name' => 'X', 'description' => '', 'unit_price' => '1'], $lines),
     'aged' => $aged, 'months' => $months, 'products' => $prod, 'categories' => $cat, 'by_client' => $bc];
 foreach (array_keys(reports_exports()) as $key) {
@@ -206,6 +214,8 @@ t_eq('invoices sheet: due-today invoice not overdue', 'No', $sh['rows'][0][12]);
 $sh = reports_sheet('lines', $data);
 t_eq('lines sheet: unknown cost leaves cost and profit blank', [null, null], [$sh['rows'][2][11], $sh['rows'][2][12]]);
 t_eq('lines sheet: zero cost gives full profit', 50.0, $sh['rows'][1][12]);
+$sh = reports_sheet('payments', $data);
+t_eq('payments sheet: every payment, the licence one labelled', [5, 'Licence payment', 777.0], [count($sh['rows']), $sh['rows'][2][1], (float)$sh['rows'][2][4]]);
 t_eq('everything = the contract\'s 8 sheets', ['Invoices', 'Invoice lines', 'Payments', 'Quotations', 'Clients', 'Aged debt', 'Sales by month', 'Sales by product'],
     array_map(static fn($k) => reports_exports()[$k], reports_everything()));
 $wb = xlsx_build(array_map(static fn($k) => reports_sheet($k, $data, ['quotes' => [], 'clients' => []]), reports_everything()));

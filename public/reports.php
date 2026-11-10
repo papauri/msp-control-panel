@@ -99,7 +99,7 @@ foreach ($cards as $cur => $c) {
     echo '<section class="card rep-card"><h2>' . e($cur) . '</h2><dl class="rep-figs">'
         . '<div><dt title="Total of the sent and paid invoices dated in this period. Drafts and void invoices never count.">Invoiced</dt><dd>' . $money($c['invoiced'], $cur)
         . ' <small class="muted">' . (int)$c['invoices'] . ' invoice' . ((int)$c['invoices'] === 1 ? '' : 's') . '</small></dd></div>'
-        . '<div><dt title="Payments recorded against invoices in this period.">Collected</dt><dd>' . $money($c['collected'], $cur) . '</dd></div>'
+        . '<div><dt title="Every payment recorded in this period: against invoices, and licence payments on a business page.">Collected</dt><dd>' . $money($c['collected'], $cur) . '</dd></div>'
         . '<div><dt title="Still to be paid on all sent invoices, today (whatever their date).">Outstanding today</dt><dd>' . $money($c['outstanding'], $cur) . '</dd></div>'
         . '<div><dt title="Part of the outstanding amount that is past its due date.">Overdue today</dt><dd' . ($c['overdue'] > reports_tol() ? ' class="bill-overdue"' : '') . '>' . $money($c['overdue'], $cur) . '</dd></div>'
         . '<div><dt title="Line totals minus quantity x cost price, on the lines of this period\'s invoices that have a cost price. Before any discount and tax.">Profit</dt><dd>' . $profitCell($c, $cur) . '</dd></div>'
@@ -155,7 +155,7 @@ if (!$data['months']) {
     echo '<p class="muted">No invoices or payments in this period.</p>';
 } else {
     echo '<div class="scroll"><table class="list rep-table"><thead><tr>' . view_th('Month', 'Calendar month.') . view_th('Currency', 'Amounts in this currency only.', 'Cur.')
-        . view_th('Invoices', 'How many invoices.', 'Count') . view_th('Invoiced', 'Total of those invoices.') . view_th('Collected', 'Payments against invoices that month.')
+        . view_th('Invoices', 'How many invoices.', 'Count') . view_th('Invoiced', 'Total of those invoices.') . view_th('Collected', 'Payments recorded that month (invoices and licence payments).')
         . view_th('Profit', 'Where cost prices are known.', 'Where known') . '</tr></thead><tbody>';
     foreach ($data['months'] as $r) {
         $label = date('F Y', (int)gmmktime(0, 0, 0, (int)substr($r['month'], 5, 2), 1, (int)substr($r['month'], 0, 4)));
@@ -175,7 +175,7 @@ if (!$data['by_client']) {
 } else {
     echo '<div class="scroll"><table class="list rep-table"><thead><tr>' . view_th('Client', 'Company or person.') . view_th('Currency', 'Amounts in this currency only.', 'Cur.')
         . view_th('Invoices', 'How many invoices.', 'Count') . view_th('Invoiced', 'Total of those invoices.') . view_th('Still owed', 'Left to pay on those invoices.', 'On these invoices')
-        . view_th('Collected', 'Payments against invoices in the period.', 'In the period') . '</tr></thead><tbody>';
+        . view_th('Collected', 'Payments recorded in the period (invoices and licence payments).', 'In the period') . '</tr></thead><tbody>';
     foreach ($data['by_client'] as $r) {
         echo '<tr><td data-label="Client" class="col-name">' . $clientCell($r) . '</td><td data-label="Currency">' . e($r['currency']) . '</td>'
             . '<td data-label="Invoices" class="num">' . (int)$r['invoices'] . '</td>'
@@ -226,16 +226,16 @@ if (!$data['products']) {
 }
 
 // Payments
-$head('Payments', 'payments', 'Payments recorded against invoices in this period. Licence payments recorded on a business page without an invoice are not included.');
+$head('Payments', 'payments', 'Every payment recorded in this period: against invoices, and licence payments recorded on a business page (no invoice).');
 if (!$data['payments']) {
     echo '<p class="muted">No payments in this period.</p>';
 } else {
     $shown = array_slice(array_reverse($data['payments']), 0, 300);
-    echo '<div class="scroll"><table class="list rep-table"><thead><tr>' . view_th('Date', 'When it was recorded.') . view_th('Invoice', 'Invoice it was paid against.')
+    echo '<div class="scroll"><table class="list rep-table"><thead><tr>' . view_th('Date', 'When it was recorded.') . view_th('Invoice', 'Invoice it was paid against, or Licence payment when recorded on a business page.')
         . view_th('Client', 'Who paid.') . view_th('Amount', 'Amount paid.') . view_th('Method', 'How it was paid.') . view_th('Reference', 'Bank or receipt reference.') . '</tr></thead><tbody>';
     foreach ($shown as $p) {
         echo '<tr><td data-label="Date" class="nw">' . e(billing_date((string)$p['created_at'])) . '</td>'
-            . '<td data-label="Invoice" class="nw"><a href="document.php?id=' . (int)$p['document_id'] . '">' . e($p['number']) . '</a></td>'
+            . '<td data-label="Invoice" class="nw">' . (!empty($p['document_id']) ? '<a href="document.php?id=' . (int)$p['document_id'] . '">' . e($p['number']) . '</a>' : '<span class="muted">Licence payment</span>') . '</td>'
             . '<td data-label="Client" class="col-name">' . $clientCell($p, 'client_name') . '</td>'
             . '<td data-label="Amount" class="nw num">' . $money($p['amount'], (string)$p['currency']) . '</td>'
             . '<td data-label="Method">' . ((string)$p['method'] !== '' ? e(ucfirst((string)$p['method'])) : view_empty()) . '</td>'

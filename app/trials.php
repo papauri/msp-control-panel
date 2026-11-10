@@ -138,6 +138,85 @@ function trial_extend_until(string $trialUntil, string $today, int $days): strin
     return status_add_days(max($trialUntil, $today), $days);
 }
 
+/**
+ * Pure. A change to a running (or ended, not converted) trial's last day (owner 2026-11-10: extend AND shorten).
+ * $mode: 'add' (N days, from the later of the last day and today), 'remove' (N days off the last day), 'total' (the
+ * whole trial is N days from its start), 'date' (this Y-m-d is the last day). The last day can go back at most to
+ * yesterday (= "end now": the step-down starts today) and forward at most TRIAL_MAX_AHEAD_DAYS from today.
+ * Returns [new last day, ''] or ['', the reason in words].
+ */
+const TRIAL_MAX_AHEAD_DAYS = 365;
+const TRIAL_CHANGE_MODES = ['add' => 'Add days', 'remove' => 'Take days off', 'total' => 'Make the whole trial this many days'];
+
+function trial_change_until(array $t, string $mode, string $value, string $today): array
+{
+    $err = trial_change_error($t, 'change', $today);
+    if ($err !== '') {
+        return ['', $err];
+    }
+    $cur = substr((string)$t['trial_until'], 0, 10);
+    $started = substr((string)($t['trial_started'] ?? ''), 0, 10);
+    $yesterday = status_add_days($today, -1);
+    $value = trim($value);
+    if ($mode === 'date') {
+        if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value, $m) || !checkdate((int)$m[2], (int)$m[3], (int)$m[1])) {
+            return ['', 'Choose the new last day.'];
+        }
+        $until = $value;
+    } else {
+        if (!isset(TRIAL_CHANGE_MODES[$mode])) {
+            return ['', 'Choose whether to add days, take days off, or set the whole length.'];
+        }
+        // add / remove: any whole number up to the limit; total: 1..TRIAL_MAX_DAYS like a new trial
+        $n = preg_match('/^\d{1,3}$/', $value) ? (int)$value : 0;
+        $max = $mode === 'total' ? TRIAL_MAX_DAYS : TRIAL_MAX_AHEAD_DAYS;
+        if ($n < 1 || $n > $max) {
+            return ['', 'Type a whole number of days from 1 to ' . $max . '.'];
+        }
+        if ($mode === 'add') {
+            $until = trial_extend_until($cur, $today, $n);
+        } elseif ($mode === 'remove') {
+            if ($cur < $today) {
+                return ['', 'This trial has already ended, so there are no days left to take off.'];
+            }
+            $until = status_add_days($cur, -$n);
+            if ($until < $yesterday) {
+                $left = billing_days_between($today, $cur) + 1;
+                return ['', 'Only ' . $left . ' day' . ($left === 1 ? '' : 's') . ' left (today included), so ' . $n
+                    . ' cannot be taken off. To stop the trial today, use End the trial now.'];
+            }
+        } else {
+            if ($started === '') {
+                return ['', 'This trial has no start date. Set the last day instead.'];
+            }
+            $until = status_add_days($started, $n);
+        }
+    }
+    if ($until < $yesterday) {
+        return ['', 'That last day (' . billing_date($until) . ') is already in the past. The earliest is yesterday, which ends the trial today; use End the trial now for that.'];
+    }
+    if ($until > status_add_days($today, TRIAL_MAX_AHEAD_DAYS)) {
+        return ['', 'That is more than ' . TRIAL_MAX_AHEAD_DAYS . ' days from today. Check the number.'];
+    }
+    if ($until === $cur) {
+        return ['', 'The trial already ends on ' . billing_date($cur) . '. Nothing was changed.'];
+    }
+    return [$until, ''];
+}
+
+/**
+ * Pure. Paid until after a trial's last day moves from $oldUntil to $newUntil: it follows the trial while it was the
+ * trial's own date (or earlier), but paid-up time set some other way is never cut back.
+ */
+function trial_paid_until_after(string $paidUntil, string $oldUntil, string $newUntil): string
+{
+    $paidUntil = substr($paidUntil, 0, 10);
+    if ($paidUntil === '' || $paidUntil <= substr($oldUntil, 0, 10)) {
+        return $newUntil;
+    }
+    return max($paidUntil, $newUntil);
+}
+
 /** Pure. "End now": the trial's last day becomes yesterday, so the step-down starts today. */
 function trial_end_now_until(string $today): string
 {
@@ -222,9 +301,21 @@ function plan_lines(array $plan, bool $yearly, float $discountPct): array
     $disc = round($gross * $pct / 100, 2);
     if ($disc > BILLING_TOLERANCE) {
         $lines[] = ['qty' => 1.0, 'item' => 'Annual discount (' . rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.') . '%)',
-            'description' => 'For paying 12 months at once.', 'unit_price' => -$disc, 'cost_price' => null, 'catalog_item_id' => null];
+            'description' => 'For paying 12 months at once.', 'unit_price' => -$disc, 'cost_price' => $cost === null ? null : 0.0, 'catalog_item_id' => null]; // costs nothing: known when the plan's cost is, so profit counts it
     }
     return ['interval' => 12, 'lines' => $lines];
+}
+
+/**
+ * Pure. '' when a plan can be billed, else why not. A plan at 0 (the seeded plans start at 0) would make free invoices
+ * that are "paid" the moment they are sent, and a licence plan would then extend the licence for nothing.
+ */
+function plan_price_problem(array $plan): string
+{
+    if (round((float)($plan['unit_price'] ?? 0), 2) <= BILLING_TOLERANCE) {
+        return 'The plan "' . (string)($plan['item'] ?? '') . '" has no price yet. Set its price on the Catalog page first.';
+    }
+    return '';
 }
 
 /** Pure. The words for a billing interval: "every month", "every 3 months", "every year". */
@@ -320,24 +411,33 @@ function trial_start(PDO $pdo, int $tenantId, int $days, int $adminId, string $t
 /** Extends a trial by $days (from the later of its end and today). '' or the reason. Audited. */
 function trial_extend(PDO $pdo, int $tenantId, int $days, int $adminId, string $today): string
 {
-    if (trial_clean_days($days) === 0) {
-        return 'Extend by a whole number of days from 1 to ' . TRIAL_MAX_DAYS . '.';
-    }
-    return (string)trial_tx($pdo, function () use ($pdo, $tenantId, $days, $adminId, $today) {
+    $r = trial_change($pdo, $tenantId, 'add', (string)$days, $adminId, $today);
+    return $r['error'];
+}
+
+/**
+ * Moves a trial's last day (trial_change_until: add / remove / total / date), with the business locked. Paid until
+ * follows (trial_paid_until_after). Returns ['error' => '' | words, 'until' => the new last day]. Audited as
+ * trial_extended or trial_shortened.
+ */
+function trial_change(PDO $pdo, int $tenantId, string $mode, string $value, int $adminId, string $today): array
+{
+    return (array)trial_tx($pdo, function () use ($pdo, $tenantId, $mode, $value, $adminId, $today) {
         $before = tenant_find($pdo, $tenantId, true);
         if (!$before) {
-            return 'Business not found.';
+            return ['error' => 'Business not found.', 'until' => ''];
         }
-        $err = trial_change_error($before, 'extend', $today);
+        [$until, $err] = trial_change_until($before, $mode, $value, $today);
         if ($err !== '') {
-            return $err;
+            return ['error' => $err, 'until' => ''];
         }
-        $until = trial_extend_until((string)$before['trial_until'], $today, $days);
-        $pdo->prepare('UPDATE cp_tenants SET trial_until = ?, paid_until = ? WHERE id = ?')->execute([$until, $until, $tenantId]);
+        $old = substr((string)$before['trial_until'], 0, 10);
+        $paid = trial_paid_until_after((string)($before['paid_until'] ?? ''), $old, $until);
+        $pdo->prepare('UPDATE cp_tenants SET trial_until = ?, paid_until = ? WHERE id = ?')->execute([$until, $paid, $tenantId]);
         $after = tenant_find($pdo, $tenantId);
-        $after['_extended_days'] = $days;
-        audit_log($pdo, $adminId ?: null, 'trial_extended', $tenantId, $before, $after);
-        return '';
+        $after['_trial_change'] = ['mode' => $mode, 'value' => $value, 'from' => $old, 'to' => $until];
+        audit_log($pdo, $adminId ?: null, $until > $old ? 'trial_extended' : 'trial_shortened', $tenantId, $before, $after);
+        return ['error' => '', 'until' => $until];
     });
 }
 
@@ -354,7 +454,8 @@ function trial_end_now(PDO $pdo, int $tenantId, int $adminId, string $today): st
             return $err;
         }
         $until = trial_end_now_until($today);
-        $pdo->prepare('UPDATE cp_tenants SET trial_until = ?, paid_until = ? WHERE id = ?')->execute([$until, $until, $tenantId]);
+        $paid = trial_paid_until_after((string)($before['paid_until'] ?? ''), (string)$before['trial_until'], $until);
+        $pdo->prepare('UPDATE cp_tenants SET trial_until = ?, paid_until = ? WHERE id = ?')->execute([$until, $paid, $tenantId]);
         audit_log($pdo, $adminId ?: null, 'trial_ended_now', $tenantId, $before, tenant_find($pdo, $tenantId));
         return '';
     });
@@ -389,6 +490,9 @@ function trial_convert(PDO $pdo, int $tenantId, array $o, int $adminId, string $
                 $plan = plan_find($pdo, $planId);
                 if (!$plan || (int)$plan['is_active'] !== 1) {
                     throw new InvalidArgumentException('Choose one of the active plans.');
+                }
+                if (plan_price_problem($plan) !== '') {
+                    throw new InvalidArgumentException(plan_price_problem($plan));
                 }
                 $pl = plan_lines($plan, !empty($o['yearly']), plan_discount_pct(billing_setting('annual_discount_pct')));
                 $title = (string)$plan['item'];
@@ -481,6 +585,9 @@ function plan_list(PDO $pdo, bool $activeOnly = true): array
 /** Pure. "PMS licence – Monthly: MWK0.00 every month". */
 function plan_label(array $p): string
 {
+    if (plan_price_problem($p) !== '') {
+        return (string)$p['item'] . ': no price yet (set it on the Catalog page)';
+    }
     return (string)$p['item'] . ': ' . billing_money((float)$p['unit_price'], (string)$p['currency']) . ' ' . plan_interval_words((int)$p['billing_interval']);
 }
 
@@ -547,6 +654,10 @@ function plan_subscribe(PDO $pdo, int $clientId, array $o, int $adminId): array
     $plan = plan_find($pdo, (int)($o['plan_id'] ?? 0));
     if (!$plan || (int)$plan['is_active'] !== 1) {
         $res['error'] = 'Choose one of the active plans.';
+        return $res;
+    }
+    if (($pp = plan_price_problem($plan)) !== '') {
+        $res['error'] = $pp;
         return $res;
     }
     $pl = plan_lines($plan, !empty($o['yearly']), plan_discount_pct(billing_setting('annual_discount_pct')));
