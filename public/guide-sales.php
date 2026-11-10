@@ -88,14 +88,15 @@ view_head('Sales and billing guide');
 </ol>
 
 <h2 id="trials">9. Free trials</h2>
-<p>A business (a hotel, lodge, restaurant&hellip;) can run the system free for a set number of days. One free trial per business.</p>
+<p>A business (a hotel, lodge, restaurant&hellip;) can run the system free for a set number of days.</p>
 <ol>
     <li><strong>Add business</strong> and choose a free trial (7, 14 or 30 days, or your own up to 90), or open a business that has never paid &rarr; <strong>Start free trial</strong>. The system works fully during the trial.</li>
     <li>Its staff see <strong>"Free trial: N days left"</strong> in the last 7 days. The panel's lists show <em>Free trial &ndash; N days left</em>.</li>
     <li>Emails go by themselves: a welcome to the trial, reminders 7, 3 and 1 days before the end (with what it costs to continue), and on the day after the end "your free trial has ended". Each can be switched on <strong>Automations</strong>.</li>
     <li>After the last day it does not stop at once: 0 grace days, then 3 days view-only (they can still look and export), then the staff area locks. The guest website keeps working and no data is ever deleted. Change those days in <strong>Settings</strong> (Grace / Read-only days after a trial).</li>
     <li><strong>Lengthen or shorten</strong> the trial: add days, take days off, make the whole trial a set number of days, or <strong>Set the last day</strong> to an exact date. <strong>End the trial now</strong> stops it today.</li>
-    <li><strong>Convert to paid</strong>: pick a plan (monthly or yearly). This makes their recurring invoice and the first invoice, gives the business the normal step-down days (Settings &rsaquo; Normal grace / read-only days, 14 and 14), and sends a thank-you. The lock lifts as soon as the first invoice is paid. A payment recorded on the business page during a trial also ends the trial.</li>
+    <li><strong>Convert to paid</strong>: pick a plan (monthly or yearly). This makes their recurring invoice and the first invoice, gives the business the normal step-down days (Settings &rsaquo; Normal grace / read-only days, 14 and 14), and sends a thank-you. The lock lifts as soon as the first invoice is paid. A payment recorded on the business page during a trial also ends the trial; an amount of 0 there gives free months instead (the trial carries on).</li>
+    <li><strong>Put it back on a free trial</strong> (any business not on a trial now, also one that had a trial, was converted or has paid; you give the reason): a new trial starts today with the trial emails. Paid-up time is never cut back, and its licence recurring invoices are paused until you convert it again.</li>
 </ol>
 <p><strong>Billing</strong> board: trials ending in the next 7 days. <strong>Reports</strong>: trials started, converted and lost, and the conversion rate.</p>
 <p class="muted">Sales tips: 14 days is the usual sweet spot. Call the business on the day the 3-day reminder goes out; most trials are won in the last week. Offer yearly at about two months free (Settings &rsaquo; yearly discount %, about 17).</p>

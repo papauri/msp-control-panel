@@ -117,6 +117,15 @@ function trial_start_error(array $t, bool $hasPaid): string
     return '';
 }
 
+/**
+ * Pure. Whether the owner may put a business on a NEW free trial (owner 2026-11-10: "for any reason"): any business that
+ * is not on a trial right now, also one that had a trial, was converted or has paid. '' or the reason.
+ */
+function trial_restart_error(array $t): string
+{
+    return trial_is_on($t) ? 'This business is on a free trial now: lengthen, shorten or end it instead.' : '';
+}
+
 /** Pure. '' when a trial may be extended / ended / converted, else the reason. */
 function trial_change_error(array $t, string $action, string $today): string
 {
@@ -408,6 +417,54 @@ function trial_start(PDO $pdo, int $tenantId, int $days, int $adminId, string $t
         audit_log($pdo, $adminId ?: null, 'trial_started', $tenantId, $before, $after);
         billing_event('trial_started', ['tenant_id' => $tenantId, 'day' => $f['trial_started']]);
         return '';
+    });
+}
+
+/**
+ * Puts a business back on a free trial of $days from today, whatever its history (owner 2026-11-10). $reason 5..255
+ * characters (audited as trial_restarted). The trial step-down days apply and trial_converted_at is cleared, so it can be
+ * extended, ended and converted again. Paid-up time is never cut back: paid until becomes the later of its current date
+ * and the trial's last day. The business's active schedules that extend its licence are paused, so no licence invoice
+ * goes out during the trial (convert again to restart billing). Fires trial_started after the commit.
+ * Returns ['error' => '' | words, 'until' => last day, 'paid_until' => after, 'paused' => schedules paused].
+ */
+function trial_restart(PDO $pdo, int $tenantId, int $days, string $reason, int $adminId, string $today): array
+{
+    $reason = trim($reason);
+    if (trial_clean_days($days) === 0) {
+        return ['error' => 'The trial length must be a whole number of days from 1 to ' . TRIAL_MAX_DAYS . '.', 'until' => '', 'paid_until' => '', 'paused' => 0];
+    }
+    if (mb_strlen($reason) < 5 || mb_strlen($reason) > 255) {
+        return ['error' => 'Say why it goes back on a free trial (5 to 255 characters).', 'until' => '', 'paid_until' => '', 'paused' => 0];
+    }
+    return (array)trial_tx($pdo, function () use ($pdo, $tenantId, $days, $reason, $adminId, $today) {
+        $before = tenant_find($pdo, $tenantId, true);
+        if (!$before) {
+            return ['error' => 'Business not found.', 'until' => '', 'paid_until' => '', 'paused' => 0];
+        }
+        $err = trial_restart_error($before);
+        if ($err !== '') {
+            return ['error' => $err, 'until' => '', 'paid_until' => '', 'paused' => 0];
+        }
+        $f = trial_dates($today, $days, trial_setting_int('trial_grace_days', 0), trial_setting_int('trial_readonly_days', 3));
+        $paid = max(substr((string)$before['paid_until'], 0, 10), $f['trial_until']);
+        $pdo->prepare('UPDATE cp_tenants SET trial_started = ?, trial_until = ?, paid_until = ?, grace_days = ?, readonly_days = ?, trial_converted_at = NULL WHERE id = ?')
+            ->execute([$f['trial_started'], $f['trial_until'], $paid, $f['grace_days'], $f['readonly_days'], $tenantId]);
+        $st = $pdo->prepare('SELECT * FROM cp_recurring WHERE tenant_id = ? AND is_active = 1 AND extend_months > 0 FOR UPDATE');
+        $st->execute([$tenantId]);
+        $paused = 0;
+        foreach ($st->fetchAll() as $r) {
+            $pdo->prepare('UPDATE cp_recurring SET is_active = 0 WHERE id = ?')->execute([(int)$r['id']]);
+            $rAfter = recurring_find($pdo, (int)$r['id']);
+            $rAfter['_why'] = 'paused: the business went back on a free trial';
+            audit_log($pdo, $adminId ?: null, 'recurring_saved', $tenantId, $r, $rAfter);
+            $paused++;
+        }
+        $after = tenant_find($pdo, $tenantId);
+        $after['_trial_restart'] = ['days' => $days, 'reason' => mb_substr($reason, 0, 255), 'schedules_paused' => $paused];
+        audit_log($pdo, $adminId ?: null, 'trial_restarted', $tenantId, $before, $after);
+        billing_event('trial_started', ['tenant_id' => $tenantId, 'day' => $f['trial_started']]);
+        return ['error' => '', 'until' => $f['trial_until'], 'paid_until' => $paid, 'paused' => $paused];
     });
 }
 

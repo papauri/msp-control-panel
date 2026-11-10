@@ -215,6 +215,11 @@ t_eq('a schedule on the 30th: 28 Feb, then back to 30 Mar', ['2026-02-28', '2026
     [recurring_add_months('2026-01-30', 1, 30), recurring_add_months('2026-02-28', 1, 30)]);
 t_eq('a month-end schedule: 30 Apr, 31 May', ['2026-04-30', '2026-05-31'], [recurring_add_months('2026-03-31', 1, 31), recurring_add_months('2026-04-30', 1, 31)]);
 
+// ---------------------------------------------------------------- owner 2026-11-10: back on a trial for any reason
+t_eq('restart: allowed after a converted trial, after paying, never twice at once', ['', '', true],
+    [trial_restart_error(['trial_until' => '2026-01-01', 'trial_converted_at' => '2026-01-02 10:00:00']), trial_restart_error(['trial_until' => null]),
+     trial_restart_error(['trial_until' => '2099-01-01', 'trial_converted_at' => null]) !== '']);
+
 // ---------------------------------------------------------------- owner 2026-11-10: free time only on a trial
 [$ez] = billing_doc_validate(['kind' => 'invoice', 'customer_name' => 'X', 'issue_date' => '2026-11-10', 'currency' => 'MWK', 'extend_months' => '1'],
     [['qty' => '1', 'item' => 'Licence', 'unit_price' => '0']]);
@@ -673,6 +678,19 @@ try {
     t_eq('db: free month: trial a month longer, still on, paid until follows, no payment', ['', status_add_months((string)$t4['trial_until'], 1), true, $t4b['trial_until'], 0],
         [$fm['error'], $t4b['trial_until'], trial_is_on($t4b), $t4b['paid_until'], (int)$pdo->query('SELECT COUNT(*) FROM cp_payments WHERE tenant_id = ' . $tid4)->fetchColumn()]);
     t_ok('db: free month noted in the audit', strpos((string)$pdo->query("SELECT after_json FROM cp_audit_log WHERE tenant_id = $tid4 AND action = 'trial_extended' ORDER BY id DESC LIMIT 1")->fetchColumn(), 'Free month') !== false);
+
+    // Back on a free trial for any reason: the converted, paying business from above.
+    $schedA = (int)$cv['schedule_id'];
+    $pdo->prepare('UPDATE cp_recurring SET is_active = 1 WHERE id = ?')->execute([$schedA]);
+    $pu0 = tenant_find($pdo, $tid)['paid_until'];
+    t_ok('db: restart needs a reason', trial_restart($pdo, $tid, 14, 'x', 0, $today)['error'] !== '');
+    $rs = trial_restart($pdo, $tid, 14, 'testing the new modules', 0, $today);
+    billing_events_clear();
+    $t1 = tenant_find($pdo, $tid);
+    t_eq('db: back on a trial: on, converted cleared, paid time kept, licence schedule paused', ['', true, status_add_days($today, 14), max($pu0, status_add_days($today, 14)), 0, 1],
+        [$rs['error'], trial_is_on($t1), $t1['trial_until'], $t1['paid_until'], (int)recurring_find($pdo, $schedA)['is_active'], $rs['paused']]);
+    t_ok('db: not twice while on', trial_restart($pdo, $tid, 14, 'testing again', 0, $today)['error'] !== '');
+    t_ok('db: restart audited with the reason', strpos((string)$pdo->query("SELECT after_json FROM cp_audit_log WHERE tenant_id = $tid AND action = 'trial_restarted' ORDER BY id DESC LIMIT 1")->fetchColumn(), 'testing the new modules') !== false);
     t_eq('db: nothing was emailed', [], $sent);
 } finally {
     $pdo->rollBack();

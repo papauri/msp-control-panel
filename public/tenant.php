@@ -270,6 +270,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = $err !== '' ? $err : ($days === 0 ? 'Choose the trial length.' : trial_start($pdo, $postId, $days, $adminId, $today));
             flash_set($err === '' ? 'ok' : 'error', $err === '' ? 'Free trial started: ' . $days . ' days. The business picks it up at its next check-in.' : $err);
             back_to($postId);
+        } elseif ($action === 'trial_restart' && $postId > 0) {
+            if (!billing_once_consume('trial_restart_' . $postId, (string)($_POST['once'] ?? ''))) {
+                flash_set('info', 'That was already done (the form was sent twice).');
+                back_to($postId);
+            }
+            [$days, $err] = trial_days_from_form((string)($_POST['trial_preset'] ?? ''), (string)($_POST['trial_custom'] ?? ''));
+            $r = $err !== '' ? ['error' => $err] : trial_restart($pdo, $postId, $days, (string)($_POST['reason'] ?? ''), $adminId, $today);
+            if ($r['error'] !== '') {
+                flash_set('error', $r['error']);
+            } else {
+                flash_set('ok', 'Back on a free trial: ' . $days . ' days, last day ' . billing_date($r['until']) . '.'
+                    . ($r['paid_until'] > $r['until'] ? ' Its paid-up time was kept: paid until stays ' . billing_date($r['paid_until']) . '.' : '')
+                    . ($r['paused'] > 0 ? ' ' . $r['paused'] . ' licence recurring invoice' . ($r['paused'] === 1 ? ' was' : 's were') . ' paused (convert again to bill it).' : '')
+                    . ' The business picks it up at its next check-in.');
+                tenant_nudge($pdo, $postId);
+            }
+            back_to($postId);
         } elseif ($action === 'trial_extend' && $postId > 0) {
             flash_set('info', 'The free trial form has changed. Nothing was changed: please choose again below.');
             back_to($postId);
@@ -493,7 +510,20 @@ if ($tenant) {
             . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial">' . $tHidden . '<input type="hidden" name="action" value="trial_start">'
             . $presetSel() . '<button type="submit" class="secondary">Start free trial</button></form>';
     } else {
-        echo '<p class="muted">Not on a free trial. A trial is only for a business that has never paid.</p>';
+        echo '<p class="muted">Not on a free trial' . (!empty($tenant['trial_started']) || trial_has_paid($pdo, $tid0) ? ' (it has had one, or has paid)' : '') . '.</p>';
+    }
+    if (trial_restart_error($tenant) === '' && trial_start_error($tenant, trial_has_paid($pdo, $tid0)) !== '') {
+        // owner 2026-11-10: any business can be put back on a free trial, for any reason
+        $paidAhead = substr((string)$tenant['paid_until'], 0, 10) > $today;
+        echo '<details class="spaced"><summary>Put it back on a free trial</summary>'
+            . '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="js-once spaced" data-confirm="Put this business back on a free trial?">' . $tHidden
+            . '<input type="hidden" name="action" value="trial_restart"><input type="hidden" name="once" value="' . e(billing_once_issue('trial_restart_' . $tid0)) . '">'
+            . '<p class="muted">A new trial starts today with the trial step-down days and the trial emails. '
+            . ($paidAhead ? 'Paid-up time is kept: paid until (' . e(billing_date((string)$tenant['paid_until'])) . ') is never cut back. ' : '')
+            . 'Its licence recurring invoices are paused during the trial; convert it again to bill it.</p>'
+            . $presetSel()
+            . '<label>Why<input type="text" name="reason" required minlength="5" maxlength="255" placeholder="Trying the new modules"></label>'
+            . '<button type="submit" class="secondary">Start a new free trial</button></form></details>';
     }
     echo '</section>';
 
