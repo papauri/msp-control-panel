@@ -103,6 +103,20 @@ Everything up to commit `5022fe1` is live:
    when staff load pages or when the panel nudges them.
 4. Not done yet, and possible later: modules limit the guest website too (today only the staff side is limited).
 
+## Shipped 2026-11-10: view-only free trials (owner 2026-11-10)
+- **Panel:**
+  - migration 011 `cp_tenants.trial_view_only` (**applied**; existing rows are 0, so Liwonde's current trial is
+    unaffected)
+  - `trial_set_view_only()` / `trial_view_only_now()` in `app/trials.php`
+  - licence payload `trial_view_only`
+  - a "View only" tile on the trial card
+  - a "View only during the trial" checkbox (ticked by default) on the start / restart / new-business forms
+  - guide-sales note
+  - tests: trials 188 pure / 270 `--db`
+- **Hotels:** the `view_only` permission, plus `includes/view-only.php` (see each hotel's `STATUS.md`).
+- Pushed with the owner's OK: the hotels first, then the panel. Another session also works in the hotel folders: stage
+  by name only.
+
 ## Waiting on the owner
 - Nothing blocking.
 

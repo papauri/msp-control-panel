@@ -144,6 +144,8 @@ $payload = [
     // Part 3 (2026-11-09): free trial. trial = true while trial_until is set and not converted. Old sites ignore both.
     'trial' => !empty($tenant['trial_until']) && empty($tenant['trial_converted_at']),
     'trial_until' => !empty($tenant['trial_until']) ? (string)$tenant['trial_until'] : null,
+    // 2026-11-10: view-only free trial. true = every staff member can read, nobody can change anything. Old sites ignore it.
+    'trial_view_only' => trial_view_only_now($tenant),
 ];
 // Staff changes queued on the panel (app/hms.php). A fault here never blocks the licence answer.
 try {

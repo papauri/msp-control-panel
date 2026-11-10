@@ -78,6 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         if ($trialErr !== '') {
                             throw new InvalidArgumentException($trialErr);
                         }
+                        trial_set_view_only($pdo, $newId, (string)($_POST['trial_view_only'] ?? '') === '1', $adminId);
                     }
                     $pdo->commit();
                     billing_events_flush($pdo);
@@ -268,7 +269,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($action === 'trial_start' && $postId > 0) {
             [$days, $err] = trial_days_from_form((string)($_POST['trial_preset'] ?? ''), (string)($_POST['trial_custom'] ?? ''));
             $err = $err !== '' ? $err : ($days === 0 ? 'Choose the trial length.' : trial_start($pdo, $postId, $days, $adminId, $today));
-            flash_set($err === '' ? 'ok' : 'error', $err === '' ? 'Free trial started: ' . $days . ' days. The business picks it up at its next check-in.' : $err);
+            if ($err === '') {
+                trial_set_view_only($pdo, $postId, (string)($_POST['trial_view_only'] ?? '') === '1', $adminId);
+            }
+            flash_set($err === '' ? 'ok' : 'error', $err === '' ? 'Free trial started: ' . $days . ' days' . ((string)($_POST['trial_view_only'] ?? '') === '1' ? ', view only' : '')
+                . '. The business picks it up at its next check-in.' : $err);
             back_to($postId);
         } elseif ($action === 'trial_restart' && $postId > 0) {
             if (!billing_once_consume('trial_restart_' . $postId, (string)($_POST['once'] ?? ''))) {
@@ -280,12 +285,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($r['error'] !== '') {
                 flash_set('error', $r['error']);
             } else {
+                trial_set_view_only($pdo, $postId, (string)($_POST['trial_view_only'] ?? '') === '1', $adminId);
                 flash_set('ok', 'Back on a free trial: ' . $days . ' days, last day ' . billing_date($r['until']) . '.'
                     . ($r['paid_until'] > $r['until'] ? ' Its paid-up time was kept: paid until stays ' . billing_date($r['paid_until']) . '.' : '')
                     . ($r['paused'] > 0 ? ' ' . $r['paused'] . ' licence recurring invoice' . ($r['paused'] === 1 ? ' was' : 's were') . ' paused (convert again to bill it).' : '')
                     . ' The business picks it up at its next check-in.');
                 tenant_nudge($pdo, $postId);
             }
+            back_to($postId);
+        } elseif ($action === 'trial_view_only' && $postId > 0) {
+            $on = (string)($_POST['on'] ?? '') === '1';
+            $changed = trial_set_view_only($pdo, $postId, $on, $adminId);
+            flash_set('ok', !$changed ? 'Nothing to change.' : ($on
+                ? 'View only is on: while the trial lasts, its staff can read everything but cannot change anything. It applies within a minute (its next check-in).'
+                : 'View only is off: its staff can work normally again. It applies within a minute (its next check-in).'));
             back_to($postId);
         } elseif ($action === 'trial_extend' && $postId > 0) {
             flash_set('info', 'The free trial form has changed. Nothing was changed: please choose again below.');
@@ -482,6 +495,13 @@ if ($tenant) {
             . '<div class="tool-fields"><label>Last day<input type="date" name="until" required value="' . e(substr((string)$tenant['trial_until'], 0, 10)) . '" min="' . e(status_add_days($today, -1))
             . '" max="' . e(status_add_days($today, TRIAL_MAX_AHEAD_DAYS)) . '"></label></div>'
             . '<button type="submit" class="secondary">Set last day</button></form>';
+        $vo = !empty($tenant['trial_view_only']);
+        echo '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="tool' . ($vo ? ' tool-warn' : '') . '"' . ($vo ? '' : ' data-confirm="Make this business view only? Its staff will not be able to change anything until you switch it off or the trial is converted."') . '>' . $tHidden
+            . '<input type="hidden" name="action" value="trial_view_only"><input type="hidden" name="on" value="' . ($vo ? '0' : '1') . '">'
+            . '<h3>View only: ' . ($vo ? 'on' : 'off') . '</h3><p class="muted">' . ($vo
+                ? 'Staff can open and read everything but cannot add, change or delete anything (buttons are greyed out). Ends when the trial is converted.'
+                : 'Staff work normally. Switch on to let them look around without changing anything.') . '</p>'
+            . '<div class="tool-fields"></div><button type="submit" class="' . ($vo ? '' : 'secondary') . '">' . ($vo ? 'Let staff make changes' : 'Make it view only') . '</button></form>';
         if ((int)trial_days_left($tenant, $today) >= 0) {
             echo '<form method="post" action="tenant.php?id=' . $tid0 . '#trial" class="tool tool-warn" data-confirm="End this free trial now?">' . $tHidden . '<input type="hidden" name="action" value="trial_end">'
                 . '<h3>End now</h3><p class="muted">Yesterday becomes the last day: view-only starts today, then the staff area pauses.</p>'
@@ -512,7 +532,7 @@ if ($tenant) {
             . '<h3>Start a free trial</h3><p class="muted">This business has never paid, so it can have a free trial. Paid until becomes the trial\'s last day; after it the system is '
             . 'view-only for ' . e(billing_setting('trial_readonly_days')) . ' day(s)' . ((int)billing_setting('trial_grace_days') > 0 ? ' after ' . e(billing_setting('trial_grace_days')) . ' grace day(s)' : '')
             . ', then the staff area pauses. Data is never deleted.</p>'
-            . '<div class="tool-fields bill-grid">' . $presetSel() . '</div><button type="submit" class="secondary">Start free trial</button></form></div>';
+            . '<div class="tool-fields bill-grid">' . $presetSel() . '<label class="check span-all"><input type="checkbox" name="trial_view_only" value="1" checked> View only during the trial: staff can open and read everything, but cannot add, change or delete anything</label>' . '</div><button type="submit" class="secondary">Start free trial</button></form></div>';
     } else {
         echo '<p class="muted">Not on a free trial' . (!empty($tenant['trial_started']) || trial_has_paid($pdo, $tid0) ? ' (it has had one, or has paid)' : '') . '.</p>';
     }
@@ -525,7 +545,7 @@ if ($tenant) {
             . '<h3>New free trial</h3><p class="muted">Starts today with the trial step-down days and the trial emails. '
             . ($paidAhead ? 'Paid-up time is kept: paid until (' . e(billing_date((string)$tenant['paid_until'])) . ') is never cut back. ' : '')
             . 'Its licence recurring invoices are paused during the trial; convert it again to bill it.</p>'
-            . '<div class="tool-fields bill-grid">' . $presetSel()
+            . '<div class="tool-fields bill-grid">' . $presetSel() . '<label class="check span-all"><input type="checkbox" name="trial_view_only" value="1" checked> View only during the trial: staff can open and read everything, but cannot add, change or delete anything</label>'
             . '<label class="span-2">Why<small class="hint">Kept in the audit log</small><input type="text" name="reason" required minlength="5" maxlength="255" placeholder="Trying the new modules"></label></div>'
             . '<button type="submit" class="secondary">Start a new free trial</button></form></div></details>';
     }
@@ -674,7 +694,8 @@ echo '<h3 class="form-sec">Licence and price</h3><div class="bill-grid">'
         . '<label>Length<select name="trial_preset"><option value="">No free trial</option>'
         . implode('', array_map(static fn($p) => '<option value="' . $p . '"' . ((string)($_POST['trial_preset'] ?? '') === (string)$p ? ' selected' : '') . '>' . $p . ' days</option>', TRIAL_PRESETS))
         . '<option value="custom"' . (($_POST['trial_preset'] ?? '') === 'custom' ? ' selected' : '') . '>Custom (below)</option></select></label>'
-        . '<label>Custom days (1-' . TRIAL_MAX_DAYS . ')<input type="number" name="trial_custom" min="1" max="' . TRIAL_MAX_DAYS . '" value="' . e((string)($_POST['trial_custom'] ?? '')) . '"></label></div>' : '')
+        . '<label>Custom days (1-' . TRIAL_MAX_DAYS . ')<input type="number" name="trial_custom" min="1" max="' . TRIAL_MAX_DAYS . '" value="' . e((string)($_POST['trial_custom'] ?? '')) . '"></label>'
+        . '<label class="check span-all"><input type="checkbox" name="trial_view_only" value="1"' . (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST' || !empty($_POST['trial_view_only']) ? ' checked' : '') . '> View only during the trial: staff can open and read everything, but cannot add, change or delete anything</label></div>' : '')
     . '<h3 class="form-sec">Billing contact</h3><p class="muted">Invoices, reminders and statements go here.</p><div class="bill-grid">'
     . '<label>Contact name<input type="text" name="contact_name" maxlength="120" value="' . e($v('contact_name')) . '"></label>'
     . '<label>Phone<input type="text" name="contact_phone" maxlength="60" value="' . e($v('contact_phone')) . '"></label>'

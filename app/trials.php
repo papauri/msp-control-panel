@@ -395,6 +395,28 @@ function trial_tx(PDO $pdo, callable $fn)
 }
 
 /** Starts a free trial. Returns '' or the reason it was refused. Audited; fires trial_started (after the commit). */
+/**
+ * View-only trial (owner 2026-11-10): while on, every staff member of the business's HMS can read everything but change
+ * nothing, as long as the business is on its free trial (licence answer: trial_view_only). Audited. Returns true when it
+ * changed.
+ */
+function trial_set_view_only(PDO $pdo, int $tenantId, bool $on, ?int $adminId): bool
+{
+    $st = $pdo->prepare('UPDATE cp_tenants SET trial_view_only = ? WHERE id = ? AND trial_view_only <> ?');
+    $st->execute([$on ? 1 : 0, $tenantId, $on ? 1 : 0]);
+    if ($st->rowCount() !== 1) {
+        return false;
+    }
+    audit_log($pdo, $adminId, 'trial_view_only_set', $tenantId, ['trial_view_only' => $on ? 0 : 1], ['trial_view_only' => $on ? 1 : 0]);
+    return true;
+}
+
+/** True while the business's HMS must be view-only: on a free trial (not converted) with view-only switched on. */
+function trial_view_only_now(array $t): bool
+{
+    return !empty($t['trial_view_only']) && !empty($t['trial_until']) && empty($t['trial_converted_at']);
+}
+
 function trial_start(PDO $pdo, int $tenantId, int $days, int $adminId, string $today): string
 {
     if (trial_clean_days($days) === 0) {

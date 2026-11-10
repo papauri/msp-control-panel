@@ -409,6 +409,12 @@ t_ok('converted: thanks, plan, first invoice', $m['subject'] === 'Thank you for 
     && strpos($m['text'], '170140') !== false && strpos($m['html'], 'Standard Bank') === false);
 t_ok('trial kinds can be sent', !array_diff(automation_trial_kinds(), billing_mail_kinds()) && !array_diff(automation_trial_kinds(), email_kinds()));
 
+// View-only free trial (owner 2026-11-10): only while on a trial that is not converted, and only when switched on.
+t_eq('view only: trial on + switched on', true, trial_view_only_now(['trial_view_only' => 1, 'trial_until' => '2026-12-01', 'trial_converted_at' => null]));
+t_eq('view only: switched off', false, trial_view_only_now(['trial_view_only' => 0, 'trial_until' => '2026-12-01', 'trial_converted_at' => null]));
+t_eq('view only: converted = never', false, trial_view_only_now(['trial_view_only' => 1, 'trial_until' => '2026-12-01', 'trial_converted_at' => '2026-11-20 10:00:00']));
+t_eq('view only: no trial = never', false, trial_view_only_now(['trial_view_only' => 1, 'trial_until' => null]));
+t_eq('view only: an old row without the column = never', false, trial_view_only_now(['trial_until' => '2026-12-01']));
 if (!in_array('--db', $argv, true)) {
     t_done('trials_test');
 }
@@ -691,6 +697,10 @@ try {
         [$rs['error'], trial_is_on($t1), $t1['trial_until'], $t1['paid_until'], (int)recurring_find($pdo, $schedA)['is_active'], $rs['paused']]);
     t_ok('db: not twice while on', trial_restart($pdo, $tid, 14, 'testing again', 0, $today)['error'] !== '');
     t_ok('db: restart audited with the reason', strpos((string)$pdo->query("SELECT after_json FROM cp_audit_log WHERE tenant_id = $tid AND action = 'trial_restarted' ORDER BY id DESC LIMIT 1")->fetchColumn(), 'testing the new modules') !== false);
+    t_ok('db: view only switched on (audited)', trial_set_view_only($pdo, $tid, true, null) && trial_view_only_now(tenant_find($pdo, $tid)));
+    t_ok('db: switching it on twice changes nothing', !trial_set_view_only($pdo, $tid, true, null));
+    t_ok('db: view only off again', trial_set_view_only($pdo, $tid, false, null) && !trial_view_only_now(tenant_find($pdo, $tid)));
+    t_eq('db: the live hotels start with view only off', 0, (int)$pdo->query('SELECT COUNT(*) FROM cp_tenants WHERE id IN (1, 2) AND trial_view_only = 1')->fetchColumn());
     t_eq('db: nothing was emailed', [], $sent);
 } finally {
     $pdo->rollBack();
