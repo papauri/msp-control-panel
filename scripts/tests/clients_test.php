@@ -256,7 +256,7 @@ try {
     billing_set_status($pdo, $zId, 'sent', 0);
     t_eq('db: zero-total invoice paid when sent', 'paid', billing_doc_row($pdo, $zId)['status']);
 
-    // 5. Recurring: one due today runs once (second run refused); one from 31 Jan runs twice (28 Feb, then 28 Mar).
+    // 5. Recurring: one due today runs once (second run refused); one from 31 Jan runs twice (28 Feb, then 31 Mar).
     [$e1, $ra] = recurring_validate(['client_id' => (string)$cid, 'title' => 'Smoke hosting', 'interval_months' => '1', 'next_date' => $today,
         'currency' => 'MWK', 'send_mode' => 'draft'], [['qty' => '1', 'item' => 'Hosting', 'unit_price' => '100000', 'cost_price' => '30000']]);
     $rA = recurring_save($pdo, $ra, 0);
@@ -272,7 +272,7 @@ try {
     $rB = recurring_save($pdo, $rb, 0);
     $b1 = recurring_run_one($pdo, $rB, 0, $today);
     $b2 = recurring_run_one($pdo, $rB, 0, $today);
-    t_eq('db: 31 Jan schedule ran twice', ['2026-02-28', '2026-03-28'], [$b1['next_date'], $b2['next_date']]);
+    t_eq('db: 31 Jan schedule ran twice (a month end stays a month end)', ['2026-02-28', '2026-03-31'], [$b1['next_date'], $b2['next_date']]);
     t_eq('db: recurring copies cost', '30000.00', (string)billing_doc_items($pdo, $run1['document_id'])[0]['cost_price']);
     t_ok('db: upcoming board list', count(recurring_upcoming($pdo, $today, 7)) >= 1);
 

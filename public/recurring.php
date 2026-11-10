@@ -19,7 +19,7 @@ $formLines = null;
 function rec_posted_lines(): array
 {
     $cols = ['qty' => 'line_qty', 'item' => 'line_item', 'description' => 'line_description', 'unit_price' => 'line_unit_price',
-        'cost_price' => 'line_cost_price', 'catalog_item_id' => 'line_catalog_id'];
+        'cost_price' => 'line_cost_price', 'catalog_item_id' => 'line_catalog_id', 'follow' => 'line_follow'];
     $data = [];
     $n = 0;
     foreach ($cols as $k => $name) {
@@ -136,7 +136,7 @@ if (!$rec && !$isNew) {
             . view_th('Every', 'How often.') . view_th('Next invoice', 'Date of the next invoice.') . view_th('Amount', 'Total of the lines, before tax.')
             . view_th('Then', 'What happens to the invoice.') . view_th('Status', 'Active or paused.') . '</tr></thead><tbody>';
         foreach ($all as $r) {
-            $tot = billing_calc_totals(recurring_items($r), 0, 0);
+            $tot = billing_calc_totals(recurring_priced($pdo, $r)['items'], 0, 0); // today's prices
             $due = recurring_is_due($r, $today);
             echo '<tr><td data-label="Client" class="col-name"><a href="client.php?id=' . (int)$r['client_id'] . '">' . e($r['client_name']) . '</a></td>'
                 . '<td data-label="Title"><a href="recurring.php?id=' . (int)$r['id'] . '">' . e($r['title']) . '</a></td>'
@@ -168,28 +168,38 @@ $fv = static function (string $k) use ($form, $rec): string {
 };
 $cur = $fv('currency');
 $lines = $formLines;
+$priced = $rid ? recurring_priced($pdo, $rec) : ['items' => [], 'error' => ''];
 if ($lines === null) {
     $lines = [];
-    foreach (recurring_items($rec) as $it) {
+    foreach ($priced['items'] as $it) { // lines that follow a price show today's price
         $lines[] = ['qty' => rtrim(rtrim(number_format((float)($it['qty'] ?? 1), 2, '.', ''), '0'), '.'), 'item' => (string)($it['item'] ?? ''),
             'description' => (string)($it['description'] ?? ''), 'unit_price' => number_format((float)($it['unit_price'] ?? 0), 2, '.', ''),
             'cost_price' => isset($it['cost_price']) && $it['cost_price'] !== null ? number_format((float)$it['cost_price'], 2, '.', '') : '',
-            'catalog_item_id' => !empty($it['catalog_item_id']) ? (string)(int)$it['catalog_item_id'] : ''];
+            'catalog_item_id' => !empty($it['catalog_item_id']) ? (string)(int)$it['catalog_item_id'] : '', 'follow' => (string)($it['follow'] ?? '')];
     }
 }
 if (!$lines) {
-    $lines[] = ['qty' => '1', 'item' => '', 'description' => '', 'unit_price' => '', 'cost_price' => '', 'catalog_item_id' => ''];
+    $lines[] = ['qty' => '1', 'item' => '', 'description' => '', 'unit_price' => '', 'cost_price' => '', 'catalog_item_id' => '', 'follow' => ''];
 }
 $lineRow = static function (array $l) use ($cur): string {
-    $l += ['cost_price' => '', 'catalog_item_id' => ''];
+    $l += ['cost_price' => '', 'catalog_item_id' => '', 'follow' => ''];
+    $follow = isset(RECURRING_FOLLOW[$l['follow']]) ? $l['follow'] : '';
+    $sel = '<select name="line_follow[]" class="in-follow" title="Where this line\'s price comes from when each invoice is made">'
+        . '<option value="">Fixed: the price typed here</option>';
+    foreach (RECURRING_FOLLOW as $fk => $fl) {
+        $sel .= '<option value="' . e($fk) . '"' . ($follow === $fk ? ' selected' : '') . '>' . e($fl) . '</option>';
+    }
+    $sel .= '</select>';
     $total = (preg_match('/^\d+(\.\d+)?$/', (string)$l['qty']) && preg_match('/^-?\d+(\.\d+)?$/', (string)$l['unit_price']))
         ? billing_money(billing_line_total((float)$l['qty'], (float)$l['unit_price']), $cur) : '';
     return '<tr class="line"><td data-label="Qty"><input type="text" name="line_qty[]" inputmode="decimal" class="in-qty" required value="' . e($l['qty']) . '"></td>'
         . '<td data-label="Item"><input type="text" name="line_item[]" maxlength="190" class="in-item" value="' . e($l['item']) . '">'
         . '<input type="hidden" name="line_catalog_id[]" class="in-cat" value="' . e($l['catalog_item_id']) . '"></td>'
         . '<td data-label="Description"><textarea name="line_description[]" rows="2" maxlength="2000" class="in-desc">' . e($l['description']) . '</textarea></td>'
-        . '<td data-label="Unit price"><input type="text" name="line_unit_price[]" inputmode="decimal" class="in-price" value="' . e($l['unit_price']) . '"></td>'
-        . '<td data-label="Cost (yours)"><input type="text" name="line_cost_price[]" inputmode="decimal" class="in-cost" value="' . e($l['cost_price']) . '"></td>'
+        . '<td data-label="Unit price"><input type="text" name="line_unit_price[]" inputmode="decimal" class="in-price" value="' . e($l['unit_price']) . '"'
+        . ($follow !== '' ? ' readonly' : '') . '>' . $sel . '</td>'
+        . '<td data-label="Cost (yours)"><input type="text" name="line_cost_price[]" inputmode="decimal" class="in-cost" value="' . e($l['cost_price']) . '"'
+        . ($follow === 'plan' ? ' readonly' : '') . '></td>'
         . '<td data-label="Total" class="num nw line-total">' . e($total) . '</td>'
         . '<td data-label=""><button type="button" class="secondary js-remove-line" title="Remove this line">Remove</button></td></tr>';
 };
@@ -210,6 +220,9 @@ echo '<h1>' . ($rid ? e($rec['title']) . ((int)$rec['is_active'] === 1 ? ' <span
 view_flash();
 foreach ($errors as $m) {
     echo '<p class="flash flash-error">' . e($m) . '</p>';
+}
+if ($priced['error'] !== '') {
+    echo '<p class="flash flash-error">' . e($priced['error']) . ' Until then no invoice is made.</p>';
 }
 
 if ($rid) {
@@ -243,7 +256,7 @@ foreach ($clients as $c) {
 echo '</select></label>'
     . '<label>Title (shown in the email: "your regular invoice for …")<input type="text" name="title" required maxlength="190" value="' . e($fv('title')) . '"></label>'
     . '<label>Every (months)<input type="number" name="interval_months" min="1" max="36" required value="' . e($fv('interval_months')) . '"><small class="muted">1 = monthly, 3 = quarterly, 12 = yearly.</small></label>'
-    . '<label>Next invoice date<input type="date" name="next_date" required value="' . e($fv('next_date')) . '"><small class="muted">A date like the 31st moves to the last day in shorter months.</small></label>'
+    . '<label>Next invoice date<input type="date" name="next_date" required value="' . e($fv('next_date')) . '"><small class="muted">The schedule keeps this day; in a shorter month it uses the last day, then comes back (30 Jan, 28 Feb, 30 Mar). The last day of a month stays the last day.</small></label>'
     . '<label>End date (optional)<input type="date" name="end_date" value="' . e($fv('end_date')) . '"></label>'
     . '<label>Currency<input type="text" name="currency" id="currency" required maxlength="3" value="' . e($cur) . '"></label>'
     . '<label>Invoice due after (days)<input type="number" name="due_days" min="0" max="365" value="' . e($fv('due_days')) . '"></label>'
@@ -256,12 +269,13 @@ $activeChecked = is_array($form) ? (($form['is_active'] ?? '') === '1') : ((int)
 echo '</select></label></div>'
     . '<h2>Lines</h2><div class="scroll"><table class="bill-lines"><thead><tr>'
     . view_th('Qty', 'Quantity.') . view_th('Item', 'Printed in the Item column.') . view_th('Description', 'Printed beside the item.')
-    . view_th('Unit price', 'Price of one, before tax.') . view_th('Cost', 'What one costs you. Never printed.', 'Yours, never printed')
+    . view_th('Unit price', 'Price of one, before tax. Below it: fixed, or follows the Catalog / the business\'s monthly fee / the annual discount, so each invoice uses the price of that day.') . view_th('Cost', 'What one costs you. Never printed.', 'Yours, never printed')
     . view_th('Total', 'Quantity times unit price.') . view_th('', 'Remove a line.', 'Remove') . '</tr></thead><tbody id="lines">';
 foreach ($lines as $l) {
     echo $lineRow($l);
 }
-echo '</tbody></table></div><template id="line-template">' . $lineRow(['qty' => '1', 'item' => '', 'description' => '', 'unit_price' => '']) . '</template>'
+echo '</tbody></table></div><p class="muted">A line that follows a price is billed at the price of the day each invoice is made (the price shown is today\'s). '
+    . 'Set it to Fixed to keep the price typed here.</p><template id="line-template">' . $lineRow(['qty' => '1', 'item' => '', 'description' => '', 'unit_price' => '']) . '</template>'
     . '<div class="bill-add"><button type="button" class="secondary" id="add-line">Add line</button>';
 if ($catalog) {
     $cats = billing_catalog_categories();

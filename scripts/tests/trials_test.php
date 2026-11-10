@@ -153,7 +153,100 @@ $p = plan_lines(['unit_price' => '1000'] + $monthly, true, 7.5);
 t_eq('yearly 7.5% of 12,000 = 900', [-900.0, 'Annual discount (7.5%)', 11100.0], [$p['lines'][1]['unit_price'], $p['lines'][1]['item'], billing_calc_totals($p['lines'], 0, 0)['total']]);
 $p = plan_lines(['unit_price' => '33333.33'] + $monthly, true, 12.5);
 t_eq('yearly 12.5% of 399,999.96: discount 50,000.00 (rounded to 2 dp)', [399999.96, 349999.96], [billing_calc_totals([$p['lines'][0]], 0, 0)['total'], billing_calc_totals($p['lines'], 0, 0)['total']]);
-t_eq('yearly with no discount: no discount line', 1, count(plan_lines($monthly, true, 0)['lines']));
+$p0 = plan_lines($monthly, true, 0);
+t_eq('yearly with no discount: a 0 discount line that follows the setting', [2, 0.0, 'annual_discount'], [count($p0['lines']), $p0['lines'][1]['unit_price'], $p0['lines'][1]['follow']]);
+t_eq('yearly with no discount: the invoice leaves the 0 line out', 1, count(recurring_price_items($p0['lines'], 'MWK', [], null, 0)['items']));
+t_eq('plan lines follow the plan', ['plan', ''], [plan_lines($monthly, false, 0)['lines'][0]['follow'], plan_lines(['id' => 0] + $monthly, false, 0)['lines'][0]['follow']]);
+t_eq('business fee lines follow the monthly fee', 'monthly_fee', plan_lines(['id' => 0, 'follow' => 'monthly_fee'] + $monthly, true, 10)['lines'][0]['follow']);
+
+// ---------------------------------------------------------------- owner 2026-11-10: prices follow the plan
+$cat = [3 => ['id' => 3, 'item' => 'IT Support – Monthly', 'unit_price' => '120000.00', 'cost_price' => '70000.00', 'currency' => 'MWK', 'is_active' => 1]];
+$yl = plan_lines($monthly, true, 10)['lines']; // made at 100,000 with 10 %
+$pr = recurring_price_items($yl, 'MWK', $cat, null, 10);
+t_eq('plan price raised: 12 x 120,000 less 10 % = 1,296,000', [120000.0, -144000.0, 1296000.0],
+    [$pr['items'][0]['unit_price'], $pr['items'][1]['unit_price'], billing_calc_totals($pr['items'], 0, 0)['total']]);
+t_eq('the new cost follows too, and the discount cost is known', [70000.0, 0.0], [$pr['items'][0]['cost_price'], $pr['items'][1]['cost_price']]);
+$pr = recurring_price_items($yl, 'MWK', $cat, null, 15);
+t_eq('discount setting changed to 15 %: label and amount follow', ['Annual discount (15%)', -216000.0], [$pr['items'][1]['item'], $pr['items'][1]['unit_price']]);
+$pr = recurring_price_items($yl, 'MWK', $cat, null, 0);
+t_eq('discount set to 0: the line is left out', 1, count($pr['items']));
+$pr = recurring_price_items($yl, 'MWK', [3 => ['is_active' => 0] + $cat[3]], null, 10);
+t_eq('plan switched off: the price last stored is kept', 100000.0, $pr['items'][0]['unit_price']);
+t_eq('plan deleted: the price last stored is kept', 100000.0, recurring_price_items($yl, 'MWK', [], null, 10)['items'][0]['unit_price']);
+$pr = recurring_price_items($yl, 'MWK', [3 => ['currency' => 'USD'] + $cat[3]], null, 10);
+t_ok('plan priced in another currency: refused, never billed as MWK', $pr['error'] !== '' && strpos($pr['error'], 'USD') !== false);
+$fixed = [['qty' => 1.0, 'item' => 'Hosting', 'unit_price' => 5000.0, 'cost_price' => null, 'catalog_item_id' => 3, 'follow' => '']];
+t_eq('a fixed line keeps its price even from a saved item', 5000.0, recurring_price_items($fixed, 'MWK', $cat, null, 10)['items'][0]['unit_price']);
+$feeLines = plan_lines(['id' => 0, 'follow' => 'monthly_fee', 'unit_price' => '50000'] + $monthly, false, 0)['lines'];
+$pr = recurring_price_items($feeLines, 'MWK', [], ['monthly_fee' => '65000.00', 'currency' => 'MWK'], 0);
+t_eq('monthly fee raised on the business: followed', 65000.0, $pr['items'][0]['unit_price']);
+t_ok('monthly fee in another currency: refused', recurring_price_items($feeLines, 'MWK', [], ['monthly_fee' => '65', 'currency' => 'USD'], 0)['error'] !== '');
+$withFollow = array_map(static fn($l) => ['qty' => (string)$l['qty'], 'item' => $l['item'], 'description' => $l['description'],
+    'unit_price' => number_format((float)$l['unit_price'], 2, '.', ''), 'cost_price' => '', 'catalog_item_id' => (string)($l['catalog_item_id'] ?? ''), 'follow' => $l['follow']], $yl);
+[$ev, $rv] = recurring_validate(['client_id' => '1', 'title' => 'X', 'interval_months' => '12', 'next_date' => '2026-11-09', 'currency' => 'MWK', 'send_mode' => 'draft'], $withFollow);
+t_eq('schedule keeps where each price comes from', [[], 'plan', 'annual_discount'], [$ev, $rv['items'][0]['follow'], $rv['items'][1]['follow']]);
+[, $rv] = recurring_validate(['client_id' => '1', 'title' => 'X', 'interval_months' => '1', 'next_date' => '2026-11-09', 'currency' => 'MWK'],
+    [['qty' => '1', 'item' => 'Typed', 'unit_price' => '10', 'follow' => 'plan']]);
+t_eq('"follows the Catalog" without a saved item: fixed', '', $rv['items'][0]['follow']);
+[$ev] = recurring_validate(['client_id' => '1', 'title' => 'X', 'interval_months' => '1', 'next_date' => '2026-11-09', 'currency' => 'MWK'],
+    [['qty' => '1', 'item' => 'Typed', 'unit_price' => '100'], ['qty' => '1', 'item' => 'Disc', 'unit_price' => '-10', 'follow' => 'annual_discount']]);
+t_ok('a discount line with nothing to follow is refused', (bool)array_filter($ev, static fn($m) => strpos($m, 'annual discount') !== false));
+[$ev, $rv] = recurring_validate(['client_id' => '1', 'title' => 'X', 'interval_months' => '1', 'next_date' => '2026-11-09', 'currency' => 'MWK'],
+    [['qty' => '1', 'item' => 'Typed', 'unit_price' => '10', 'follow' => 'nonsense']]);
+t_eq('an unknown price source is fixed', '', $rv['items'][0]['follow']);
+[, $di] = billing_lines_validate([['qty' => '1', 'item' => 'A', 'unit_price' => '1']]);
+t_ok('invoice lines carry no price source', !array_key_exists('follow', $di[0]));
+
+// ---------------------------------------------------------------- owner 2026-11-10: a month end stays a month end
+t_eq('28 Feb + 1 = 31 Mar', '2026-03-31', status_add_months('2026-02-28', 1));
+t_eq('30 Apr + 1 = 31 May', '2026-05-31', status_add_months('2026-04-30', 1));
+t_eq('28 Feb in a leap year is not the end: 28 Mar', '2028-03-28', status_add_months('2028-02-28', 1));
+t_eq('29 Feb 2028 + 1 = 31 Mar', '2028-03-31', status_add_months('2028-02-29', 1));
+t_eq('30 Jan + 1 = 28 Feb (clamped)', '2026-02-28', status_add_months('2026-01-30', 1));
+t_eq('31 Jan, 28 Feb, 31 Mar: no drift', ['2026-02-28', '2026-03-31', '2026-04-30'],
+    [status_add_months('2026-01-31', 1), status_add_months(status_add_months('2026-01-31', 1), 1), status_add_months(status_add_months(status_add_months('2026-01-31', 1), 1), 1)]);
+t_eq('back a month from a month end', '2026-02-28', status_add_months('2026-03-31', -1));
+t_eq('15th stays 15th', '2026-03-15', status_add_months('2026-02-15', 1));
+t_eq('anchor day: set up on the 30th', [30, 31, 31, 15], [recurring_anchor_day('2026-01-30'), recurring_anchor_day('2026-01-31'), recurring_anchor_day('2026-02-28'), recurring_anchor_day('2026-02-15')]);
+t_eq('a schedule on the 30th: 28 Feb, then back to 30 Mar', ['2026-02-28', '2026-03-30'],
+    [recurring_add_months('2026-01-30', 1, 30), recurring_add_months('2026-02-28', 1, 30)]);
+t_eq('a month-end schedule: 30 Apr, 31 May', ['2026-04-30', '2026-05-31'], [recurring_add_months('2026-03-31', 1, 31), recurring_add_months('2026-04-30', 1, 31)]);
+
+// ---------------------------------------------------------------- owner 2026-11-10: free time only on a trial
+[$ez] = billing_doc_validate(['kind' => 'invoice', 'customer_name' => 'X', 'issue_date' => '2026-11-10', 'currency' => 'MWK', 'extend_months' => '1'],
+    [['qty' => '1', 'item' => 'Licence', 'unit_price' => '0']]);
+t_ok('a free invoice that extends a licence is refused', (bool)array_filter($ez, static fn($m) => strpos($m, 'must cost something') !== false));
+[$ez] = billing_doc_validate(['kind' => 'invoice', 'customer_name' => 'X', 'issue_date' => '2026-11-10', 'currency' => 'MWK', 'extend_months' => '0'],
+    [['qty' => '1', 'item' => 'Free setup', 'unit_price' => '0']]);
+t_eq('a free invoice that extends nothing is fine', [], $ez);
+
+// ---------------------------------------------------------------- owner 2026-11-10: void and refund
+$pay = ['id' => 7, 'amount' => '100000.00', 'currency' => 'MWK', 'voided_at' => null, 'refund_of' => null];
+$ref1 = ['id' => 8, 'amount' => '-30000.00', 'currency' => 'MWK', 'voided_at' => null, 'refund_of' => 7];
+t_eq('refundable: all of it', 100000.0, billing_payment_refundable($pay, [$pay]));
+t_eq('refundable after a 30,000 refund', 70000.0, billing_payment_refundable($pay, [$pay, $ref1]));
+t_eq('a void refund gives nothing back', 100000.0, billing_payment_refundable($pay, [$pay, ['voided_at' => '2026-11-10 10:00:00'] + $ref1]));
+t_eq('nothing to refund on a void payment or a refund', [0.0, 0.0], [billing_payment_refundable(['voided_at' => '2026-11-10'] + $pay, []), billing_payment_refundable($ref1, [])]);
+t_eq('a payment can be voided', '', billing_void_payment_error($pay, [$pay]));
+t_ok('not twice', billing_void_payment_error(['voided_at' => '2026-11-10'] + $pay, []) !== '');
+t_ok('not once partly refunded', strpos(billing_void_payment_error($pay, [$pay, $ref1]), 'refunded') !== false);
+t_ok('a refund cannot be voided', billing_void_payment_error($ref1, []) !== '');
+t_eq('state words', ['', 'Partly refunded (MWK30,000.00)', 'Refund of payment #7', 'Void: entered twice'],
+    [billing_payment_state($pay, [$pay]), billing_payment_state($pay, [$pay, $ref1]), billing_payment_state($ref1, []),
+     billing_payment_state(['voided_at' => '2026-11-10', 'void_reason' => 'entered twice'] + $pay, [])]);
+t_eq('refunded in full', 'Refunded in full', billing_payment_state($pay, [$pay, ['amount' => '-100000.00'] + $ref1]));
+t_eq('licence back: nothing moved since, exactly back', '2026-11-30', billing_licence_back_until('2026-12-31', '2026-11-30', '2026-12-31', 1)[0]);
+t_eq('licence back: a later payment moved it on, months off now', '2027-01-31', billing_licence_back_until('2027-02-28', '2026-11-30', '2026-12-31', 1)[0]);
+t_eq('licence back: never before where it started', '2026-11-30', billing_licence_back_until('2027-01-15', '2026-11-30', '2026-12-31', 3)[0]);
+$lb = billing_licence_back_until('2026-12-10', '2026-11-30', '2026-12-31', 1);
+t_ok('licence back: already moved back by hand, left as it is', $lb[0] === '2026-12-10' && strpos($lb[1], 'by hand') !== false);
+$stm = billing_statement_build([['id' => 1, 'number' => 'INV-1', 'issue_date' => '2026-11-01', 'total' => '100000.00']],
+    [['id' => 7, 'document_id' => 1, 'created_at' => '2026-11-02 10:00:00', 'reference' => 'T1', 'amount' => '100000.00', 'method' => 'bank_transfer', 'voided_at' => null],
+     ['id' => 8, 'document_id' => 1, 'created_at' => '2026-11-03 10:00:00', 'reference' => 'R1', 'amount' => '-30000.00', 'method' => 'bank_transfer', 'voided_at' => null],
+     ['id' => 9, 'document_id' => 1, 'created_at' => '2026-11-04 10:00:00', 'reference' => 'X', 'amount' => '5000.00', 'method' => 'cash', 'voided_at' => '2026-11-04 11:00:00']],
+    null, '2026-11-30');
+t_eq('statement: a refund is a debit, a void payment is left out', [3, 'refund', 30000.0, 30000.0],
+    [count($stm['lines']), $stm['lines'][2]['type'], $stm['lines'][2]['debit'], $stm['closing']]);
 
 // ---------------------------------------------------------------- payment audit 2026-11-10
 $costed = ['cost_price' => '60000.00'] + $monthly;

@@ -666,9 +666,15 @@ function billing_lines_validate(array $lines): array
             $err[] = 'Line ' . $n . ': cost price must be an amount, for example 75000, or left empty.';
             $cost = '';
         }
-        $items[] = ['qty' => (float)$qty, 'item' => $item, 'description' => $desc, 'unit_price' => (float)$price,
+        $one = ['qty' => (float)$qty, 'item' => $item, 'description' => $desc, 'unit_price' => (float)$price,
             'cost_price' => $cost === '' ? null : round((float)$cost, 2),
             'catalog_item_id' => ctype_digit($catId) && (int)$catId > 0 ? (int)$catId : null];
+        if (array_key_exists('follow', $l)) {
+            // recurring schedules only: where the price comes from when each invoice is made (recurring_price_items)
+            $f = $g('follow', 20);
+            $one['follow'] = isset(RECURRING_FOLLOW[$f]) ? $f : '';
+        }
+        $items[] = $one;
     }
     if (!$items) {
         $err[] = 'Add at least one line.';
@@ -767,6 +773,10 @@ function billing_doc_validate(array $in, array $lines): array
     }
     if ($t['total'] < -BILLING_TOLERANCE) {
         $err[] = 'The total cannot be below zero.';
+    } elseif ($kind === 'invoice' && $doc['extend_months'] > 0 && $items && $t['total'] <= BILLING_TOLERANCE) {
+        // owner 2026-11-10: free time is only for a free trial, given on the business page; a free invoice never extends
+        $err[] = 'An invoice that extends a licence must cost something: this one totals 0. To give free months during a free trial, '
+            . 'record 0 under Record payment on the business page; otherwise set Extend licence by to 0.';
     }
     if (($big = billing_amount_problem($t)) !== '') {
         $err[] = $big;
@@ -1066,7 +1076,8 @@ function billing_settle_zero(PDO $pdo, int $docId, int $adminId): bool
             }
             return false;
         }
-        [$months, $pBefore, $pAfter, $tenant] = billing_apply_paid_in_full($pdo, $doc, true);
+        // a free invoice is settled but never extends a licence (free time is only for a free trial, owner 2026-11-10)
+        [$months, $pBefore, $pAfter, $tenant] = billing_apply_paid_in_full($pdo, ['extend_months' => 0] + $doc, true);
         $pdo->prepare('UPDATE cp_documents SET status = \'paid\' WHERE id = ?')->execute([$docId]);
         $docAfter = billing_doc_row($pdo, $docId);
         $docAfter['_zero_total'] = ['months' => $months, 'paid_until_before' => $pBefore, 'paid_until_after' => $pAfter];
@@ -1195,6 +1206,317 @@ function billing_doc_payments(PDO $pdo, int $docId): array
     $st = $pdo->prepare('SELECT * FROM cp_payments WHERE document_id = ? ORDER BY id');
     $st->execute([$docId]);
     return $st->fetchAll();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Void and refund (owner 2026-11-10, migration 008). A payment row is never deleted.
+//   Void   = entered by mistake: voided_at is set and the row stops counting anywhere (totals, statements, reports).
+//   Refund = money given back: a new row with a negative amount and refund_of = the payment it returns; it counts on
+//            the day it is entered (Collected goes down then), and shows on statements.
+// Either way the invoice's amount paid goes down. An invoice that was paid in full and is not any more is "sent" again
+// (it has a balance), and the licence time its payment added is taken back (billing_licence_back_until), once.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Pure. A row that counts as money: not voided. */
+function billing_payment_live(array $p): bool
+{
+    return empty($p['voided_at']);
+}
+
+/** Pure. A refund row (money given back). */
+function billing_payment_is_refund(array $p): bool
+{
+    return !empty($p['refund_of']) || (float)($p['amount'] ?? 0) < -BILLING_TOLERANCE;
+}
+
+/** Pure. What can still be refunded of payment $p: its amount less its live refunds ($rows may hold any payments). */
+function billing_payment_refundable(array $p, array $rows): float
+{
+    if (!billing_payment_live($p) || billing_payment_is_refund($p)) {
+        return 0.0;
+    }
+    $left = round((float)$p['amount'], 2);
+    foreach ($rows as $r) {
+        if ((int)($r['refund_of'] ?? 0) === (int)$p['id'] && billing_payment_live($r)) {
+            $left = round($left + (float)$r['amount'], 2); // refunds are negative
+        }
+    }
+    return max(0.0, $left);
+}
+
+/** Pure. '' when payment $p may be voided, else why not. $rows: the other payments (its refunds among them). */
+function billing_void_payment_error(array $p, array $rows): string
+{
+    if (!billing_payment_live($p)) {
+        return 'This payment is already void.';
+    }
+    if (billing_payment_is_refund($p)) {
+        return 'A refund cannot be voided. If it was entered by mistake, record the money again as a payment.';
+    }
+    if (billing_payment_refundable($p, $rows) < round((float)$p['amount'], 2) - BILLING_TOLERANCE) {
+        return 'Part of this payment was refunded, so it cannot be voided. Refund the rest instead.';
+    }
+    return '';
+}
+
+/**
+ * Pure. Paid until after taking back the licence time a payment added (it moved paid_until from $before to $after).
+ * Nothing moved it since: back to $before exactly. Moved on since (a later payment): $months off today's date, never
+ * earlier than $before. Moved back by hand since (earlier than $after): left as it is (the time was already taken off).
+ * Returns [new paid until, words for the owner].
+ */
+function billing_licence_back_until(string $current, string $before, string $after, int $months): array
+{
+    $current = substr($current, 0, 10);
+    $before = substr($before, 0, 10);
+    $after = substr($after, 0, 10);
+    if ($months <= 0 || $after <= $before) {
+        return [$current, ''];
+    }
+    if ($current === $after) {
+        return [$before, 'Licence time taken back: paid until is ' . billing_date($before) . ' again (it was ' . billing_date($current) . ').'];
+    }
+    if ($current > $after) {
+        $back = max($before, status_add_months($current, -$months));
+        return [$back, 'Licence time taken back: ' . $months . ' month' . ($months === 1 ? '' : 's') . ' off, paid until is now ' . billing_date($back)
+            . ' (it was ' . billing_date($current) . '; a later payment had moved it on).'];
+    }
+    return [$current, 'Paid until (' . billing_date($current) . ') was already moved back by hand, so it was left as it is. Check it on the business page.'];
+}
+
+/** Live refunds (and any other rows) of a payment's invoice or of the payment itself, for the checks above. */
+function billing_payment_family(PDO $pdo, array $p): array
+{
+    if (!empty($p['document_id'])) {
+        return billing_doc_payments($pdo, (int)$p['document_id']);
+    }
+    $st = $pdo->prepare('SELECT * FROM cp_payments WHERE id = ? OR refund_of = ? ORDER BY id');
+    $st->execute([(int)$p['id'], (int)$p['id']]);
+    return $st->fetchAll();
+}
+
+/**
+ * Inside a transaction: takes back the licence time payment $p added (months > 0, not taken back before), with the
+ * business locked. Sets licence_back_at; audited (licence_taken_back). Returns the words for the owner ('' = nothing).
+ */
+function billing_take_back_licence(PDO $pdo, array $p, int $adminId, string $why): string
+{
+    if ((int)($p['months'] ?? 0) <= 0 || !empty($p['licence_back_at']) || empty($p['tenant_id'])) {
+        return '';
+    }
+    $tenant = tenant_find($pdo, (int)$p['tenant_id'], true);
+    if (!$tenant) {
+        return '';
+    }
+    [$until, $words] = billing_licence_back_until((string)$tenant['paid_until'], (string)$p['paid_until_before'], (string)$p['paid_until_after'], (int)$p['months']);
+    if ($until !== substr((string)$tenant['paid_until'], 0, 10)) {
+        $pdo->prepare('UPDATE cp_tenants SET paid_until = ? WHERE id = ?')->execute([$until, (int)$tenant['id']]);
+    }
+    $pdo->prepare('UPDATE cp_payments SET licence_back_at = ? WHERE id = ?')->execute([date('Y-m-d H:i:s'), (int)$p['id']]);
+    $after = tenant_find($pdo, (int)$tenant['id']);
+    $after['_licence_back'] = ['payment_id' => (int)$p['id'], 'months' => (int)$p['months'], 'why' => $why];
+    audit_log($pdo, $adminId ?: null, 'licence_taken_back', (int)$tenant['id'], $tenant, $after);
+    return $words;
+}
+
+/**
+ * Inside a transaction, with the invoice locked: its amount paid goes down by $amount. A paid invoice with a balance again
+ * is "sent"; if it extended a licence, the time is taken back (from the payment that added it). Returns the words.
+ */
+function billing_reduce_paid(PDO $pdo, array $doc, float $amount, int $adminId, string $why): string
+{
+    $newPaid = max(0.0, round((float)$doc['amount_paid'] - $amount, 2));
+    $full = round((float)$doc['total'] - $newPaid, 2) <= BILLING_TOLERANCE;
+    $status = $doc['status'] === 'paid' && !$full ? 'sent' : (string)$doc['status'];
+    $pdo->prepare('UPDATE cp_documents SET amount_paid = ?, status = ? WHERE id = ?')->execute([number_format($newPaid, 2, '.', ''), $status, (int)$doc['id']]);
+    $words = '';
+    if ($doc['status'] === 'paid' && !$full && (int)$doc['extend_months'] > 0) {
+        $st = $pdo->prepare('SELECT * FROM cp_payments WHERE document_id = ? AND months > 0 AND voided_at IS NULL AND licence_back_at IS NULL
+            AND refund_of IS NULL ORDER BY id DESC LIMIT 1 FOR UPDATE');
+        $st->execute([(int)$doc['id']]);
+        $q = $st->fetch();
+        if ($q) {
+            $words = billing_take_back_licence($pdo, $q, $adminId, $why . ' (invoice ' . $doc['number'] . ' no longer paid in full)');
+        }
+    }
+    return $words;
+}
+
+/**
+ * Voids a payment entered by mistake. $reason 5..255 characters. One transaction, audited (payment_voided). Returns
+ * ['ok','error','words'] (words: what happened to the invoice and the licence).
+ */
+function billing_void_payment(PDO $pdo, int $paymentId, string $reason, int $adminId): array
+{
+    $res = ['ok' => false, 'error' => '', 'words' => ''];
+    $reason = trim($reason);
+    if (mb_strlen($reason) < 5 || mb_strlen($reason) > 255) {
+        $res['error'] = 'Say why it is void (5 to 255 characters), for example "entered twice".';
+        return $res;
+    }
+    $own = !$pdo->inTransaction();
+    if ($own) {
+        $pdo->beginTransaction();
+    }
+    try {
+        $p0 = billing_payment($pdo, $paymentId);
+        $doc = $p0 && !empty($p0['document_id']) ? billing_doc_row($pdo, (int)$p0['document_id'], true) : null; // invoice first, then the payment
+        $st = $pdo->prepare('SELECT * FROM cp_payments WHERE id = ? FOR UPDATE');
+        $st->execute([$paymentId]);
+        $p = $st->fetch();
+        $fail = !$p ? 'That payment no longer exists.' : billing_void_payment_error($p, billing_payment_family($pdo, $p));
+        if ($fail === '' && !empty($p['document_id']) && !$doc) {
+            $fail = 'The invoice of this payment no longer exists.';
+        }
+        if ($fail !== '') {
+            if ($own) {
+                $pdo->rollBack();
+            }
+            $res['error'] = $fail;
+            return $res;
+        }
+        $words = [];
+        if ($doc) {
+            $w = billing_reduce_paid($pdo, $doc, (float)$p['amount'], $adminId, 'payment ' . $paymentId . ' voided');
+            $after = billing_doc_row($pdo, (int)$doc['id']);
+            $words[] = 'Invoice ' . $doc['number'] . ': ' . ($after['status'] === 'paid' ? 'still paid.' : 'balance due ' . billing_money(billing_balance($after), (string)$after['currency']) . '.');
+            if ($w !== '') {
+                $words[] = $w;
+            }
+        } else {
+            $w = billing_take_back_licence($pdo, $p, $adminId, 'payment ' . $paymentId . ' voided');
+            if ($w !== '') {
+                $words[] = $w;
+            }
+        }
+        $pdo->prepare('UPDATE cp_payments SET voided_at = ?, voided_by = ?, void_reason = ? WHERE id = ?')
+            ->execute([date('Y-m-d H:i:s'), $adminId ?: null, mb_substr($reason, 0, 255), $paymentId]);
+        audit_log($pdo, $adminId ?: null, 'payment_voided', !empty($p['tenant_id']) ? (int)$p['tenant_id'] : ($doc && $doc['tenant_id'] !== null ? (int)$doc['tenant_id'] : null),
+            $p, billing_payment($pdo, $paymentId));
+        if ($own) {
+            $pdo->commit();
+        }
+        return ['ok' => true, 'error' => '', 'words' => implode(' ', $words)];
+    } catch (Throwable $e) {
+        if ($own && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+/**
+ * Records money given back for a payment: a new row of -$amount (up to what is left of it). Against an invoice, its
+ * amount paid goes down (a balance is due again unless $voidInvoice and nothing is left paid, then the invoice is void: the
+ * sale is cancelled). A licence payment from the business page: $takeBack takes back the months it added. One transaction,
+ * audited (payment_refunded). Returns ['ok','error','refund_id','words'].
+ */
+function billing_refund_payment(PDO $pdo, int $paymentId, float $amount, string $method, string $reference, bool $takeBack, bool $voidInvoice, int $adminId): array
+{
+    $res = ['ok' => false, 'error' => '', 'refund_id' => 0, 'words' => ''];
+    $amount = round($amount, 2);
+    $reference = trim($reference);
+    if (!isset(billing_payment_methods()[$method])) {
+        $res['error'] = 'Choose how the money was given back.';
+        return $res;
+    }
+    if ($amount <= BILLING_TOLERANCE) {
+        $res['error'] = 'Enter the amount given back.';
+        return $res;
+    }
+    if (mb_strlen($reference) < 3 || mb_strlen($reference) > 190) {
+        $res['error'] = 'A reference of 3 to 190 characters is required (transfer or cheque number, or a note).';
+        return $res;
+    }
+    $own = !$pdo->inTransaction();
+    if ($own) {
+        $pdo->beginTransaction();
+    }
+    try {
+        $p0 = billing_payment($pdo, $paymentId);
+        $doc = $p0 && !empty($p0['document_id']) ? billing_doc_row($pdo, (int)$p0['document_id'], true) : null;
+        $st = $pdo->prepare('SELECT * FROM cp_payments WHERE id = ? FOR UPDATE');
+        $st->execute([$paymentId]);
+        $p = $st->fetch();
+        $fail = '';
+        if (!$p) {
+            $fail = 'That payment no longer exists.';
+        } elseif (!billing_payment_live($p)) {
+            $fail = 'This payment is void; there is nothing to refund.';
+        } elseif (billing_payment_is_refund($p)) {
+            $fail = 'This is a refund already.';
+        } elseif (!empty($p['document_id']) && !$doc) {
+            $fail = 'The invoice of this payment no longer exists.';
+        } else {
+            $left = billing_payment_refundable($p, billing_payment_family($pdo, $p));
+            if ($amount - $left > BILLING_TOLERANCE) {
+                $fail = $left <= BILLING_TOLERANCE ? 'This payment was refunded in full already.'
+                    : 'At most ' . billing_money($left, (string)$p['currency']) . ' of this payment can still be refunded.';
+            }
+        }
+        if ($fail !== '') {
+            if ($own) {
+                $pdo->rollBack();
+            }
+            $res['error'] = $fail;
+            return $res;
+        }
+        $words = [];
+        if ($doc) {
+            $w = billing_reduce_paid($pdo, $doc, $amount, $adminId, 'refund of payment ' . $paymentId);
+            $after = billing_doc_row($pdo, (int)$doc['id']);
+            if ($voidInvoice && (float)$after['amount_paid'] <= BILLING_TOLERANCE && $after['status'] !== 'void') {
+                $pdo->prepare('UPDATE cp_documents SET status = \'void\' WHERE id = ?')->execute([(int)$doc['id']]);
+                audit_log($pdo, $adminId ?: null, 'invoice_void', $doc['tenant_id'] !== null ? (int)$doc['tenant_id'] : null, $after, billing_doc_row($pdo, (int)$doc['id']));
+                $words[] = 'Invoice ' . $doc['number'] . ' is now void (the sale is cancelled).';
+            } else {
+                $words[] = 'Invoice ' . $doc['number'] . ': ' . ($after['status'] === 'paid' ? 'still paid.' : 'balance due ' . billing_money(billing_balance($after), (string)$after['currency']) . ' again.');
+            }
+            if ($w !== '') {
+                $words[] = $w;
+            }
+        } elseif ($takeBack) {
+            $w = billing_take_back_licence($pdo, $p, $adminId, 'refund of payment ' . $paymentId);
+            if ($w !== '') {
+                $words[] = $w;
+            }
+        }
+        $tenant = !empty($p['tenant_id']) ? tenant_find($pdo, (int)$p['tenant_id']) : null;
+        $pu = $tenant ? (string)$tenant['paid_until'] : status_today();
+        $now = date('Y-m-d H:i:s');
+        $pdo->prepare('INSERT INTO cp_payments (tenant_id, client_id, document_id, refund_of, admin_id, amount, currency, months, reference, method,
+            paid_until_before, paid_until_after, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)')
+            ->execute([$p['tenant_id'], $p['client_id'], $p['document_id'], $paymentId, $adminId ?: null, number_format(-$amount, 2, '.', ''),
+                $p['currency'], $reference, $method, $pu, $pu, $now]);
+        $rid = (int)$pdo->lastInsertId();
+        audit_log($pdo, $adminId ?: null, 'payment_refunded', !empty($p['tenant_id']) ? (int)$p['tenant_id'] : ($doc && $doc['tenant_id'] !== null ? (int)$doc['tenant_id'] : null),
+            $p, billing_payment($pdo, $rid));
+        if ($own) {
+            $pdo->commit();
+        }
+        return ['ok' => true, 'error' => '', 'refund_id' => $rid, 'words' => implode(' ', $words)];
+    } catch (Throwable $e) {
+        if ($own && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+/** Pure. A payment row's state in words for tables: '' (counts), 'Void: reason', 'Refund', with a note when refunded. */
+function billing_payment_state(array $p, array $rows): string
+{
+    if (!billing_payment_live($p)) {
+        return 'Void' . (($p['void_reason'] ?? '') !== '' ? ': ' . (string)$p['void_reason'] : '');
+    }
+    if (billing_payment_is_refund($p)) {
+        return 'Refund' . (!empty($p['refund_of']) ? ' of payment #' . (int)$p['refund_of'] : '');
+    }
+    $left = billing_payment_refundable($p, $rows);
+    if ($left < round((float)$p['amount'], 2) - BILLING_TOLERANCE) {
+        return $left <= BILLING_TOLERANCE ? 'Refunded in full' : 'Partly refunded (' . billing_money((float)$p['amount'] - $left, (string)$p['currency']) . ')';
+    }
+    return '';
 }
 
 // Only an unpaid invoice (nothing received) that is not already void. Returns '' or an error.
@@ -1416,10 +1738,16 @@ function billing_statement_build(array $invoices, array $payments, ?string $from
         if (!$inv) {
             continue; // not against an invoice on this statement
         }
-        $events[] = ['date' => substr((string)$p['created_at'], 0, 10), 'order' => 1, 'id' => (int)$p['id'], 'type' => 'payment',
+        if (!empty($p['voided_at'])) {
+            continue; // entered by mistake: never on a statement
+        }
+        $amt = round((float)$p['amount'], 2);
+        $how = isset($methods[(string)($p['method'] ?? '')]) ? ' (' . $methods[(string)$p['method']] . ')' : '';
+        // a refund (negative) is money given back: a debit, so the balance shows what is owed again
+        $events[] = ['date' => substr((string)$p['created_at'], 0, 10), 'order' => 1, 'id' => (int)$p['id'], 'type' => $amt < 0 ? 'refund' : 'payment',
             'ref' => (string)$p['reference'],
-            'description' => 'Payment for invoice ' . $inv['number'] . (isset($methods[(string)($p['method'] ?? '')]) ? ' (' . $methods[(string)$p['method']] . ')' : ''),
-            'debit' => 0.0, 'credit' => round((float)$p['amount'], 2)];
+            'description' => ($amt < 0 ? 'Refund for invoice ' : 'Payment for invoice ') . $inv['number'] . $how,
+            'debit' => $amt < 0 ? -$amt : 0.0, 'credit' => $amt < 0 ? 0.0 : $amt];
     }
     usort($events, static function ($a, $b) {
         return [$a['date'], $a['order'], $a['id']] <=> [$b['date'], $b['order'], $b['id']];

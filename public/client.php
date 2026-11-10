@@ -117,6 +117,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('error', 'That payment was not found for this client.');
                 client_back($postId, '#payments');
             }
+            if (!billing_payment_live($pay) || billing_payment_is_refund($pay)) {
+                flash_set('error', !billing_payment_live($pay) ? 'This payment is void, so it has no receipt.' : 'This is a refund, so it has no receipt.');
+                client_back($postId, '#payments');
+            }
             if ($action === 'receipt_pdf') {
                 // The receipt as it stood right after this payment: billing_receipt_parts (billing_mail.php); fallback billing_receipt_doc.
                 $parts = billing_has_mail() && function_exists('billing_receipt_parts') ? billing_receipt_parts($pdo, (int)$pay['id']) : null;
@@ -366,13 +370,20 @@ if (!$payments) {
         . view_th('For', 'The invoice it paid, or a licence payment made on the business page.') . view_th('Paid by', 'How it was paid.')
         . view_th('Reference', 'Receipt, transfer or cheque number.') . view_th('Receipt', 'Download the receipt, or email it.') . '</tr></thead><tbody>';
     foreach ($payments as $p) {
-        echo '<tr><td data-label="Recorded" class="nw">' . e($p['created_at']) . '</td>'
-            . '<td data-label="Amount" class="nw num">' . e(billing_money((float)$p['amount'], (string)$p['currency'])) . '</td>'
+        $isLive = billing_payment_live($p);
+        $state = billing_payment_state($p, $payments);
+        echo '<tr' . (!$isLive ? ' class="muted"' : '') . '><td data-label="Recorded" class="nw">' . e($p['created_at']) . '</td>'
+            . '<td data-label="Amount" class="nw num">' . (!$isLive ? '<s>' : '') . e(billing_money((float)$p['amount'], (string)$p['currency'])) . (!$isLive ? '</s>' : '')
+            . ($state !== '' ? '<br><span class="pill pill-' . (!$isLive ? 'suspended' : 'grace') . '">' . e($state) . '</span>' : '') . '</td>'
             . '<td data-label="For">' . ($p['document_id'] !== null ? '<a href="document.php?id=' . (int)$p['document_id'] . '">Invoice ' . e((string)$p['doc_number']) . '</a>'
                 : 'Licence' . ((int)$p['months'] > 0 ? ', ' . (int)$p['months'] . ' month' . ((int)$p['months'] === 1 ? '' : 's') : '')) . '</td>'
             . '<td data-label="Paid by">' . ($p['method'] ? e($methods[(string)$p['method']] ?? (string)$p['method']) : view_empty()) . '</td>'
-            . '<td data-label="Reference">' . (($p['reference'] ?? '') !== '' ? e($p['reference']) : view_empty()) . '</td>'
-            . '<td data-label="Receipt"><form method="post" action="client.php?id=' . $cid . '" class="inline">' . $hidden
+            . '<td data-label="Reference">' . (($p['reference'] ?? '') !== '' ? e($p['reference']) : view_empty()) . '</td>';
+        if (!$isLive || billing_payment_is_refund($p)) {
+            echo '<td data-label="Receipt">' . view_empty() . '</td></tr>'; // no receipt for a void payment or a refund
+            continue;
+        }
+        echo '<td data-label="Receipt"><form method="post" action="client.php?id=' . $cid . '" class="inline">' . $hidden
             . '<input type="hidden" name="action" value="receipt_pdf"><input type="hidden" name="payment_id" value="' . (int)$p['id'] . '">'
             . '<button type="submit" class="secondary">Download receipt</button></form> '
             . '<details><summary>Send receipt</summary><form method="post" action="client.php?id=' . $cid . '" class="spaced">' . $hidden
@@ -395,7 +406,7 @@ if (!$schedules) {
         . view_th('Next invoice', 'Date of the next invoice.') . view_th('Amount', 'Total of the lines, before tax.')
         . view_th('Then', 'What happens to the invoice.') . view_th('Status', 'Active or paused.') . '</tr></thead><tbody>';
     foreach ($schedules as $r) {
-        $tot = billing_calc_totals(recurring_items($r), 0, 0);
+        $tot = billing_calc_totals(recurring_priced($pdo, $r)['items'], 0, 0); // today's prices
         echo '<tr><td data-label="Title"><a href="recurring.php?id=' . (int)$r['id'] . '">' . e($r['title']) . '</a></td>'
             . '<td data-label="Every" class="nw">' . (int)$r['interval_months'] . ' month' . ((int)$r['interval_months'] === 1 ? '' : 's') . '</td>'
             . '<td data-label="Next invoice" class="nw">' . e(billing_date($r['next_date'])) . '</td>'

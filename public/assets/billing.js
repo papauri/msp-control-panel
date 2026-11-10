@@ -95,7 +95,18 @@
     }
   }
 
-  function addLine(qty, item, desc, price, cost, catId) {
+  // Recurring schedules: a line whose price follows the Catalog / the monthly fee / the discount cannot be typed over.
+  function setFollow(row, follow) {
+    var f = row ? row.querySelector('.in-follow') : null;
+    if (!f) { return; }
+    if (follow !== undefined) { f.value = follow; }
+    var pr = row.querySelector('.in-price');
+    var ce = row.querySelector('.in-cost');
+    if (pr) { pr.readOnly = f.value !== ''; }
+    if (ce) { ce.readOnly = f.value === 'plan'; }
+  }
+
+  function addLine(qty, item, desc, price, cost, catId, follow) {
     var frag = tpl.content ? tpl.content.cloneNode(true) : null;
     var row;
     if (frag) {
@@ -123,6 +134,7 @@
     if (ce && cost !== undefined) { ce.value = cost; }
     var ci = row.querySelector('.in-cat');
     if (ci && catId !== undefined) { ci.value = catId; }
+    setFollow(row, follow === undefined ? '' : follow);
     body.appendChild(row);
     recalc();
     var focus = row.querySelector(item ? '.in-qty' : '.in-item');
@@ -144,11 +156,28 @@
       // A renamed line is no longer the saved item it came from.
       var row = t.closest('tr');
       var ci = row ? row.querySelector('.in-cat') : null;
-      if (ci && ci.value && t.getAttribute('data-picked') && t.value !== t.getAttribute('data-picked')) { ci.value = ''; }
+      if (ci && ci.value && t.getAttribute('data-picked') && t.value !== t.getAttribute('data-picked')) {
+        ci.value = '';
+        var fo = row.querySelector('.in-follow');
+        if (fo && fo.value === 'plan') { setFollow(row, ''); }
+      }
     }
     if (t.classList.contains('in-qty') || t.classList.contains('in-price') || t.classList.contains('in-cost') || t.classList.contains('in-item')
         || t.id === 'discount' || t.id === 'tax_rate' || t.id === 'currency') {
       recalc();
+    }
+  });
+
+  form.addEventListener('change', function (ev) {
+    var t = ev.target;
+    if (t && t.classList && t.classList.contains('in-follow')) {
+      var row = t.closest('tr');
+      var ci = row ? row.querySelector('.in-cat') : null;
+      if (t.value === 'plan' && ci && !ci.value) {
+        t.value = ''; // only a line added from a saved item can follow the Catalog
+        t.setCustomValidity && t.setCustomValidity('');
+      }
+      setFollow(row);
     }
   });
 
@@ -169,7 +198,7 @@
         var dm = copt.getAttribute('data-domain') || '';
         if (dm) { desc = desc.replace('<domain>', dm); }
       }
-      addLine('1', opt.getAttribute('data-item') || '', desc, opt.getAttribute('data-price') || '', opt.getAttribute('data-cost') || '', opt.value);
+      addLine('1', opt.getAttribute('data-item') || '', desc, opt.getAttribute('data-price') || '', opt.getAttribute('data-cost') || '', opt.value, 'plan');
       var rows = body.querySelectorAll('tr.line');
       var last = rows.length ? rows[rows.length - 1].querySelector('.in-item') : null;
       if (last) { last.setAttribute('data-picked', last.value); }
@@ -191,7 +220,7 @@
       var mEl = document.getElementById('sub-months');
       var months = Math.max(1, Math.min(60, parseInt(mEl && mEl.value, 10) || 1));
       var desc = (opt.getAttribute('data-sub-desc') || '').replace(/\n1 month at the monthly fee\.$/, '\n' + months + ' month' + (months === 1 ? '' : 's') + ' at the monthly fee.');
-      addLine(String(months), opt.getAttribute('data-sub-item') || 'Licence', desc, opt.getAttribute('data-sub-price') || '0', '', '');
+      addLine(String(months), opt.getAttribute('data-sub-item') || 'Licence', desc, opt.getAttribute('data-sub-price') || '0', '', '', 'monthly_fee');
       var ext = document.getElementById('extend_months');
       if (ext && !ext.disabled && (!ext.value || ext.value === '0')) { ext.value = String(months); }
     });

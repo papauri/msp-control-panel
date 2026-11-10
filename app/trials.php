@@ -288,8 +288,10 @@ function plan_lines(array $plan, bool $yearly, float $discountPct): array
     }
     $price = round((float)($plan['unit_price'] ?? 0), 2);
     $cost = isset($plan['cost_price']) && $plan['cost_price'] !== null && $plan['cost_price'] !== '' ? round((float)$plan['cost_price'], 2) : null;
+    // a schedule made from these lines follows the plan's price (or the business's monthly fee) and the discount setting
     $line = ['qty' => 1.0, 'item' => (string)($plan['item'] ?? 'Plan'), 'description' => (string)($plan['description'] ?? ''), 'unit_price' => $price,
-        'cost_price' => $cost, 'catalog_item_id' => !empty($plan['id']) ? (int)$plan['id'] : null];
+        'cost_price' => $cost, 'catalog_item_id' => !empty($plan['id']) ? (int)$plan['id'] : null,
+        'follow' => !empty($plan['id']) ? 'plan' : (string)($plan['follow'] ?? '')];
     if (!$yearly || $interval !== 1) {
         return ['interval' => $interval, 'lines' => [$line]];
     }
@@ -299,10 +301,11 @@ function plan_lines(array $plan, bool $yearly, float $discountPct): array
     $gross = billing_line_total(12, $price);
     $pct = max(0.0, min(99.99, $discountPct));
     $disc = round($gross * $pct / 100, 2);
-    if ($disc > BILLING_TOLERANCE) {
-        $lines[] = ['qty' => 1.0, 'item' => 'Annual discount (' . rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.') . '%)',
-            'description' => 'For paying 12 months at once.', 'unit_price' => -$disc, 'cost_price' => $cost === null ? null : 0.0, 'catalog_item_id' => null]; // costs nothing: known when the plan's cost is, so profit counts it
-    }
+    // Always there, even at 0 %: the schedule follows the setting, so a discount set later reaches it (an invoice
+    // leaves out a 0 discount line, recurring_price_items). Costs nothing: known when the plan's cost is, so profit counts it.
+    $lines[] = ['qty' => 1.0, 'item' => 'Annual discount (' . rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.') . '%)',
+        'description' => 'For paying 12 months at once.', 'unit_price' => $disc > BILLING_TOLERANCE ? -$disc : 0.0,
+        'cost_price' => $cost === null ? null : 0.0, 'catalog_item_id' => null, 'follow' => 'annual_discount'];
     return ['interval' => 12, 'lines' => $lines];
 }
 
@@ -353,8 +356,8 @@ function trial_setting_int(string $key, int $default): int
 /** Any payment ever recorded for this business (its own, or its client's). */
 function trial_has_paid(PDO $pdo, int $tenantId): bool
 {
-    $st = $pdo->prepare('SELECT 1 FROM cp_payments p WHERE p.tenant_id = ?
-        OR p.client_id IN (SELECT c.id FROM cp_clients c WHERE c.tenant_id = ?) LIMIT 1');
+    $st = $pdo->prepare('SELECT 1 FROM cp_payments p WHERE (p.tenant_id = ?
+        OR p.client_id IN (SELECT c.id FROM cp_clients c WHERE c.tenant_id = ?)) AND p.voided_at IS NULL AND p.amount > 0 LIMIT 1');
     $st->execute([$tenantId, $tenantId]);
     return (bool)$st->fetchColumn();
 }
@@ -418,11 +421,11 @@ function trial_extend(PDO $pdo, int $tenantId, int $days, int $adminId, string $
 /**
  * Moves a trial's last day (trial_change_until: add / remove / total / date), with the business locked. Paid until
  * follows (trial_paid_until_after). Returns ['error' => '' | words, 'until' => the new last day]. Audited as
- * trial_extended or trial_shortened.
+ * trial_extended or trial_shortened. $note (optional) is kept in the audit, e.g. "Free month (1), ref ...".
  */
-function trial_change(PDO $pdo, int $tenantId, string $mode, string $value, int $adminId, string $today): array
+function trial_change(PDO $pdo, int $tenantId, string $mode, string $value, int $adminId, string $today, string $note = ''): array
 {
-    return (array)trial_tx($pdo, function () use ($pdo, $tenantId, $mode, $value, $adminId, $today) {
+    return (array)trial_tx($pdo, function () use ($pdo, $tenantId, $mode, $value, $adminId, $today, $note) {
         $before = tenant_find($pdo, $tenantId, true);
         if (!$before) {
             return ['error' => 'Business not found.', 'until' => ''];
@@ -435,7 +438,7 @@ function trial_change(PDO $pdo, int $tenantId, string $mode, string $value, int 
         $paid = trial_paid_until_after((string)($before['paid_until'] ?? ''), $old, $until);
         $pdo->prepare('UPDATE cp_tenants SET trial_until = ?, paid_until = ? WHERE id = ?')->execute([$until, $paid, $tenantId]);
         $after = tenant_find($pdo, $tenantId);
-        $after['_trial_change'] = ['mode' => $mode, 'value' => $value, 'from' => $old, 'to' => $until];
+        $after['_trial_change'] = ['mode' => $mode, 'value' => $value, 'from' => $old, 'to' => $until] + ($note !== '' ? ['note' => mb_substr($note, 0, 250)] : []);
         audit_log($pdo, $adminId ?: null, $until > $old ? 'trial_extended' : 'trial_shortened', $tenantId, $before, $after);
         return ['error' => '', 'until' => $until];
     });
@@ -508,7 +511,7 @@ function trial_convert(PDO $pdo, int $tenantId, array $o, int $adminId, string $
                     $desc = substr($desc, 0, (int)strrpos($desc, "\n"));
                 }
                 $plan = ['id' => 0, 'item' => $sub['item'], 'description' => $desc, 'unit_price' => (float)$before['monthly_fee'],
-                    'billing_interval' => 1, 'category' => 'licence'];
+                    'billing_interval' => 1, 'category' => 'licence', 'follow' => 'monthly_fee'];
                 $pl = plan_lines($plan, !empty($o['yearly']), plan_discount_pct(billing_setting('annual_discount_pct')));
                 $title = (string)$sub['item'];
                 $currency = (string)$before['currency'];
@@ -521,7 +524,8 @@ function trial_convert(PDO $pdo, int $tenantId, array $o, int $adminId, string $
                 'next_date' => $today, 'currency' => $currency, 'due_days' => billing_setting('invoice_due_days'), 'extend_months' => (string)$extend,
                 'send_mode' => isset(recurring_send_modes()[$mode]) ? $mode : 'approve', 'notes' => ''], array_map(static function ($l) {
                     return ['qty' => (string)$l['qty'], 'item' => $l['item'], 'description' => $l['description'], 'unit_price' => number_format((float)$l['unit_price'], 2, '.', ''),
-                        'cost_price' => $l['cost_price'] === null ? '' : number_format((float)$l['cost_price'], 2, '.', ''), 'catalog_item_id' => (string)($l['catalog_item_id'] ?? '')];
+                        'cost_price' => $l['cost_price'] === null ? '' : number_format((float)$l['cost_price'], 2, '.', ''), 'catalog_item_id' => (string)($l['catalog_item_id'] ?? ''),
+                        'follow' => (string)($l['follow'] ?? '')];
                 }, $pl['lines']));
             if ($verr) {
                 throw new InvalidArgumentException(implode(' ', $verr));
@@ -664,7 +668,8 @@ function plan_subscribe(PDO $pdo, int $clientId, array $o, int $adminId): array
     $tenantId = $client['tenant_id'] !== null ? (int)$client['tenant_id'] : null;
     $lines = array_map(static function ($l) {
         return ['qty' => (string)$l['qty'], 'item' => $l['item'], 'description' => $l['description'], 'unit_price' => number_format((float)$l['unit_price'], 2, '.', ''),
-            'cost_price' => $l['cost_price'] === null ? '' : number_format((float)$l['cost_price'], 2, '.', ''), 'catalog_item_id' => (string)($l['catalog_item_id'] ?? '')];
+            'cost_price' => $l['cost_price'] === null ? '' : number_format((float)$l['cost_price'], 2, '.', ''), 'catalog_item_id' => (string)($l['catalog_item_id'] ?? ''),
+                        'follow' => (string)($l['follow'] ?? '')];
     }, $pl['lines']);
     foreach ((array)($o['extra'] ?? []) as $x) {
         if (is_array($x)) {
@@ -727,7 +732,7 @@ function trial_mail_data(PDO $pdo, array $tenant, string $kind, string $today): 
         $st->execute([(int)$tenant['id']]);
         $r = $st->fetch();
         if ($r) {
-            $tot = billing_calc_totals(recurring_items($r), 0, 0)['total'];
+            $tot = billing_calc_totals(recurring_priced($pdo, $r)['items'], 0, 0)['total'];
             $num = '';
             if (!empty($r['last_document_id'])) {
                 $d = $pdo->prepare('SELECT number FROM cp_documents WHERE id = ?');

@@ -467,7 +467,7 @@ function reports_payments(PDO $pdo, string $from, string $to): array
 {
     $end = gmdate('Y-m-d', gmmktime(0, 0, 0, (int)substr($to, 5, 2), (int)substr($to, 8, 2) + 1, (int)substr($to, 0, 4)));
     $st = $pdo->prepare(
-        "SELECT p.id, p.document_id, p.amount, p.currency, p.method, p.reference, p.created_at, d.number,
+        "SELECT p.id, p.document_id, p.refund_of, p.amount, p.currency, p.method, p.reference, p.created_at, d.number,
                 COALESCE(c1.id, c3.id, c2.id) AS client_ref,
                 COALESCE(c1.name, c3.name, c2.name, d.customer_name, t.name, '') AS client_name
          FROM cp_payments p
@@ -476,7 +476,7 @@ function reports_payments(PDO $pdo, string $from, string $to): array
          LEFT JOIN cp_clients c3 ON c3.id = d.client_id
          LEFT JOIN cp_clients c2 ON c2.tenant_id = COALESCE(p.tenant_id, d.tenant_id)
          LEFT JOIN cp_tenants t ON t.id = COALESCE(p.tenant_id, d.tenant_id)
-         WHERE p.created_at >= ? AND p.created_at < ?
+         WHERE p.created_at >= ? AND p.created_at < ? AND p.voided_at IS NULL
          ORDER BY p.created_at, p.id"
     );
     $st->execute([$from . ' 00:00:00', $end . ' 00:00:00']);
@@ -580,7 +580,7 @@ function reports_sheet(string $which, array $data, array $extra = []): ?array
         case 'payments':
             $cols = [$d('Date'), $s('Invoice no.', 12), $s('Client', 30), $s('Currency', 9), $m('Amount'), $s('Method', 14), $s('Reference', 30)];
             foreach ($data['payments'] as $r) {
-                $rows[] = [$r['created_at'], $r['number'] ?? 'Licence payment', $r['client_name'], $r['currency'], $r['amount'], $r['method'], $r['reference']];
+                $rows[] = [$r['created_at'], ((float)$r['amount'] < 0 ? 'Refund: ' : '') . ($r['number'] ?? 'Licence payment'), $r['client_name'], $r['currency'], $r['amount'], $r['method'], $r['reference']];
             }
             break;
         case 'quotes':

@@ -57,7 +57,8 @@ view_head('Sales and billing guide');
 <ul>
     <li>A sent invoice can still have its lines corrected while nothing is paid; a paid or void invoice cannot change. <strong>Void invoice</strong> is only for an invoice with no payment on it.</li>
     <li>Numbers run on by themselves (next number: Settings &rsaquo; Numbering).</li>
-    <li>An invoice that totals zero (for example a free month) counts as paid as soon as it is sent.</li>
+    <li>An invoice that totals zero counts as paid as soon as it is sent, but it never extends a licence. Free months are only for a business on a free trial: on its page, <strong>Record payment</strong> with an amount of 0 lengthens the trial by those months.</li>
+    <li><strong>Void or refund a payment</strong> (on the invoice, under Payments; a licence payment on the business page). <strong>Void</strong> is for a payment entered by mistake: it stops counting everywhere. <strong>Refund</strong> is money given back: it counts as money out on the day you record it and shows on statements. Either way the invoice's balance goes back up, and if it is no longer paid in full the licence time it added is taken back. After a full refund you can void the invoice too (the sale is cancelled, no reminders). A payment row is never deleted.</li>
 </ul>
 
 <h2 id="payments">6. Payments and receipts</h2>
@@ -81,7 +82,8 @@ view_head('Sales and billing guide');
 <ol>
     <li>On the client: <strong>New recurring invoice</strong>. Give it a title ("Website hosting"), how often (every 1, 3 or 12 months), the next date, an optional end date, payment days, and the lines (a plan, saved items, or <strong>Add licence subscription</strong>).</li>
     <li>Choose what happens on the date: <strong>send it</strong> automatically, put it in the <strong>Outbox</strong> for your click, or only make a <strong>draft</strong>.</li>
-    <li>The daily job (section 10) makes each invoice on its date and moves the next date on (a schedule on the 31st follows the end of shorter months).</li>
+    <li>The daily job (section 10) makes each invoice on its date and moves the next date on. A schedule keeps its day: one on the 30th is billed on 28 Feb, then on 30 Mar again; one on the last day of a month stays on the last day (31 Jan, 28 Feb, 31 Mar). Paid until works the same way.</li>
+    <li>Lines from a plan, a saved item, the business's monthly fee or the annual discount <strong>follow the current price</strong>: change the price in the Catalog, the fee on the business or the discount in Settings, and every later invoice uses it. Set a line to <strong>Fixed</strong> to keep the price typed on it.</li>
     <li><strong>Make the next invoice now (draft)</strong> if you need it early.</li>
 </ol>
 

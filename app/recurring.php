@@ -9,12 +9,118 @@ function recurring_send_modes(): array
 }
 
 /**
- * Pure. Calendar-safe month step: the day is kept when the target month has it, otherwise the month's last day
- * (31 Jan + 1 = 28 Feb, or 29 Feb in a leap year; 30 Nov + 3 = 28/29 Feb). Never spills into the next month.
+ * Pure. Calendar-safe month step (status_add_months): a month end stays a month end (31 Jan + 1 = 28 Feb, + 1 = 31 Mar),
+ * and with $anchorDay a schedule keeps its own day (set up on the 30th: 30 Jan, 28 Feb, 30 Mar). Never spills into the
+ * next month.
  */
-function recurring_add_months(string $date, int $months): string
+function recurring_add_months(string $date, int $months, ?int $anchorDay = null): string
 {
-    return status_add_months(substr($date, 0, 10), $months);
+    return status_add_months(substr($date, 0, 10), $months, $anchorDay);
+}
+
+/** Pure. The day a schedule comes back to, from the date it was set to: the day, or 31 (= the last day) for a month end. */
+function recurring_anchor_day(string $date): int
+{
+    $y = (int)substr($date, 0, 4);
+    $m = (int)substr($date, 5, 2);
+    $d = (int)substr($date, 8, 2);
+    return $d >= (int)gmdate('t', gmmktime(0, 0, 0, $m, 1, $y)) ? 31 : $d;
+}
+
+/**
+ * Where a schedule line's price comes from when each invoice is made (owner 2026-11-10: prices follow the plan).
+ * A line without one of these keeps the price typed on it (fixed).
+ */
+const RECURRING_FOLLOW = [
+    'plan' => 'Catalog price (follows the saved item)',
+    'monthly_fee' => 'The business\'s monthly fee',
+    'annual_discount' => 'Annual discount (follows Settings)',
+];
+
+/**
+ * Pure. A schedule's lines priced as of now. 'plan' lines take the saved item's current price and cost (an item that was
+ * deleted or switched off keeps the price last stored); 'monthly_fee' lines the business's current monthly fee;
+ * 'annual_discount' lines are $pct % off the lines that follow a price (dropped at 0 %), with a cost of 0 when those
+ * lines' costs are known. A price in another currency is never used: 'error' says so and the caller makes no invoice.
+ * $catalog: [id => catalog row]; $tenant: the hosted business or null. Returns ['items' => [...], 'error' => ''].
+ */
+function recurring_price_items(array $items, string $currency, array $catalog, ?array $tenant, float $pct): array
+{
+    $currency = strtoupper($currency);
+    $err = '';
+    $out = [];
+    $base = 0.0;
+    $hasBase = false;
+    $costKnown = true;
+    foreach ($items as $it) {
+        $f = (string)($it['follow'] ?? '');
+        if ($f === 'plan') {
+            $c = $catalog[(int)($it['catalog_item_id'] ?? 0)] ?? null;
+            if ($c && (int)($c['is_active'] ?? 1) === 1) {
+                if (strtoupper((string)$c['currency']) !== $currency) {
+                    $err = 'The saved item "' . (string)$c['item'] . '" is priced in ' . strtoupper((string)$c['currency']) . ' but this schedule bills in '
+                        . $currency . '. Change the schedule\'s currency, or set that line to a fixed price.';
+                } else {
+                    $it['unit_price'] = round((float)$c['unit_price'], 2);
+                    $it['cost_price'] = $c['cost_price'] === null || $c['cost_price'] === '' ? null : round((float)$c['cost_price'], 2);
+                }
+            }
+        } elseif ($f === 'monthly_fee' && $tenant) {
+            if (strtoupper((string)$tenant['currency']) !== $currency) {
+                $err = 'The business\'s monthly fee is in ' . strtoupper((string)$tenant['currency']) . ' but this schedule bills in ' . $currency
+                    . '. Change the schedule\'s currency, or set that line to a fixed price.';
+            } else {
+                $it['unit_price'] = round((float)$tenant['monthly_fee'], 2);
+            }
+        }
+        if ($f === 'plan' || $f === 'monthly_fee') {
+            $hasBase = true;
+            $base += billing_line_total((float)($it['qty'] ?? 1), (float)($it['unit_price'] ?? 0));
+            if (!isset($it['cost_price']) || $it['cost_price'] === '') {
+                $costKnown = false;
+            }
+        }
+        $out[] = $it;
+    }
+    $p = max(0.0, min(99.99, $pct));
+    foreach ($out as $i => $it) {
+        if (($it['follow'] ?? '') !== 'annual_discount' || !$hasBase) {
+            continue;
+        }
+        $d = round($base * $p / 100, 2);
+        if ($d <= BILLING_TOLERANCE) {
+            unset($out[$i]);
+            continue;
+        }
+        $out[$i]['qty'] = 1.0;
+        $out[$i]['unit_price'] = -$d;
+        $out[$i]['item'] = 'Annual discount (' . rtrim(rtrim(number_format($p, 2, '.', ''), '0'), '.') . '%)';
+        $out[$i]['cost_price'] = $costKnown ? 0.0 : null;
+    }
+    return ['items' => array_values($out), 'error' => $err];
+}
+
+/** A schedule's lines priced as of now (recurring_price_items with the catalog, the business and the discount setting). */
+function recurring_priced(PDO $pdo, array $r): array
+{
+    $items = recurring_items($r);
+    $ids = [];
+    foreach ($items as $it) {
+        if (($it['follow'] ?? '') === 'plan' && !empty($it['catalog_item_id'])) {
+            $ids[(int)$it['catalog_item_id']] = true;
+        }
+    }
+    $catalog = [];
+    if ($ids) {
+        $st = $pdo->prepare('SELECT * FROM cp_catalog_items WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')');
+        $st->execute(array_keys($ids));
+        foreach ($st->fetchAll() as $c) {
+            $catalog[(int)$c['id']] = $c;
+        }
+    }
+    $tenant = !empty($r['tenant_id']) ? tenant_find($pdo, (int)$r['tenant_id']) : null;
+    return recurring_price_items($items, (string)$r['currency'], $catalog, $tenant ?: null,
+        function_exists('plan_discount_pct') ? plan_discount_pct(billing_setting('annual_discount_pct')) : 0.0);
 }
 
 // Pure. Is the schedule due on $today: active, next_date reached, and end_date (if any) not before next_date.
@@ -94,8 +200,27 @@ function recurring_validate(array $in, array $lines, string $defaultCurrency = '
     if (!isset(recurring_send_modes()[$r['send_mode']])) {
         $r['send_mode'] = 'approve';
     }
+    foreach ($lines as $k => $l) {
+        if (is_array($l) && !array_key_exists('follow', $l)) {
+            $lines[$k]['follow'] = ''; // keeps the tag through billing_lines_validate
+        }
+    }
     [$lineErr, $items] = billing_lines_validate($lines);
     $err = array_merge($err, $lineErr);
+    $hasBase = false;
+    foreach ($items as $i => $it) {
+        if ($it['follow'] === 'plan' && $it['catalog_item_id'] === null) {
+            $items[$i]['follow'] = ''; // not a saved item (any more): its typed price is used
+        }
+        if (in_array($items[$i]['follow'], ['plan', 'monthly_fee'], true)) {
+            $hasBase = true;
+        }
+    }
+    foreach ($items as $it) {
+        if ($it['follow'] === 'annual_discount' && !$hasBase) {
+            $err[] = 'The line "' . $it['item'] . '" follows the annual discount, but no line follows a price for it to take off. Set it to a fixed price.';
+        }
+    }
     $t = billing_calc_totals($items, 0, 0);
     if ($t['total'] < -BILLING_TOLERANCE) {
         $err[] = 'The total cannot be below zero.';
@@ -107,7 +232,7 @@ function recurring_validate(array $in, array $lines, string $defaultCurrency = '
         $err[] = $big;
     }
     $r['items'] = array_map(static fn($it) => ['qty' => $it['qty'], 'item' => $it['item'], 'description' => $it['description'],
-        'unit_price' => $it['unit_price'], 'cost_price' => $it['cost_price'], 'catalog_item_id' => $it['catalog_item_id']], $items);
+        'unit_price' => $it['unit_price'], 'cost_price' => $it['cost_price'], 'catalog_item_id' => $it['catalog_item_id'], 'follow' => $it['follow']], $items);
     return [$err, $r];
 }
 
@@ -164,6 +289,12 @@ function recurring_save(PDO $pdo, array $r, int $adminId): int
         if (!$items) {
             throw new InvalidArgumentException('Add at least one line.');
         }
+        foreach ($items as $it) {
+            if (($it['follow'] ?? '') === 'monthly_fee' && $tenantId === null) {
+                throw new InvalidArgumentException('The line "' . $it['item'] . '" follows the business\'s monthly fee, but ' . $client['name']
+                    . ' has no hosted business. Set it to a fixed price.');
+            }
+        }
         $vals = [(int)$client['id'], $tenantId, (string)$r['title'], (int)$r['interval_months'], (string)$r['next_date'],
             !empty($r['end_date']) ? (string)$r['end_date'] : null, strtoupper((string)$r['currency']), (int)$r['due_days'], (int)$r['extend_months'],
             json_encode(array_values($items), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ($r['notes'] ?? '') !== '' ? (string)$r['notes'] : null,
@@ -174,12 +305,16 @@ function recurring_save(PDO $pdo, array $r, int $adminId): int
             if (!$before) {
                 throw new InvalidArgumentException('That schedule no longer exists.');
             }
+            // the day it comes back to follows the date you set; an unchanged date keeps it (after 28 Feb, back to the 30th)
+            $anchor = (string)$before['next_date'] === (string)$r['next_date'] && !empty($before['anchor_day'])
+                ? (int)$before['anchor_day'] : recurring_anchor_day((string)$r['next_date']);
             $pdo->prepare('UPDATE cp_recurring SET client_id = ?, tenant_id = ?, title = ?, interval_months = ?, next_date = ?, end_date = ?, currency = ?,
-                due_days = ?, extend_months = ?, items_json = ?, notes = ?, send_mode = ?, is_active = ? WHERE id = ?')->execute(array_merge($vals, [$id]));
+                due_days = ?, extend_months = ?, items_json = ?, notes = ?, send_mode = ?, is_active = ?, anchor_day = ? WHERE id = ?')
+                ->execute(array_merge($vals, [$anchor, $id]));
         } else {
             $pdo->prepare('INSERT INTO cp_recurring (client_id, tenant_id, title, interval_months, next_date, end_date, currency, due_days, extend_months,
-                items_json, notes, send_mode, is_active, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-                ->execute(array_merge($vals, [$adminId ?: null]));
+                items_json, notes, send_mode, is_active, created_by, anchor_day) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+                ->execute(array_merge($vals, [$adminId ?: null, recurring_anchor_day((string)$r['next_date'])]));
             $id = (int)$pdo->lastInsertId();
         }
         audit_log($pdo, $adminId ?: null, 'recurring_saved', $tenantId, $before, recurring_find($pdo, $id));
@@ -239,15 +374,24 @@ function recurring_run_one(PDO $pdo, int $id, int $adminId, string $today, bool 
         if ($fail === '' && !$client) {
             $fail = 'The client of this schedule no longer exists.';
         }
-        $items = $fail === '' ? recurring_items($r) : [];
+        // today's prices (a plan, the business's monthly fee and the annual discount are followed), before any check
+        $priced = $fail === '' ? recurring_priced($pdo, $r) : ['items' => [], 'error' => ''];
+        $items = $priced['items'];
+        if ($fail === '' && $priced['error'] !== '') {
+            $fail = $priced['error'] . ' No invoice was made.';
+        }
         if ($fail === '' && !$items) {
             $fail = 'This schedule has no lines.';
         }
-        if ($fail === '' && (int)$r['extend_months'] > 0) {
-            $chk = billing_calc_totals(array_map(static fn($it) => ['qty' => (float)($it['qty'] ?? 1), 'unit_price' => (float)($it['unit_price'] ?? 0)], $items), 0, 0);
-            if ($chk['total'] <= BILLING_TOLERANCE) {
-                $fail = 'This schedule extends a licence but its lines total 0, so no invoice was made (it would give the licence away). Set its prices.';
-            }
+        $chk = billing_calc_totals(array_map(static fn($it) => ['qty' => (float)($it['qty'] ?? 1), 'unit_price' => (float)($it['unit_price'] ?? 0)], $items), 0, 0);
+        if ($fail === '' && (int)$r['extend_months'] > 0 && $chk['total'] <= BILLING_TOLERANCE) {
+            $fail = 'This schedule extends a licence but its lines total 0, so no invoice was made (it would give the licence away). Set its prices.';
+        }
+        if ($fail === '' && $chk['total'] < -BILLING_TOLERANCE) {
+            $fail = 'This schedule\'s lines now total below zero, so no invoice was made. Check its prices.';
+        }
+        if ($fail === '' && ($big = billing_amount_problem($chk)) !== '') {
+            $fail = $big;
         }
         if ($fail !== '') {
             if ($own) {
@@ -272,7 +416,7 @@ function recurring_run_one(PDO $pdo, int $id, int $adminId, string $today, bool 
                 'catalog_item_id' => !empty($it['catalog_item_id']) ? (int)$it['catalog_item_id'] : null];
         }
         $docId = billing_doc_save($pdo, $doc, $lines, $adminId);
-        $next = recurring_add_months((string)$r['next_date'], (int)$r['interval_months']);
+        $next = recurring_add_months((string)$r['next_date'], (int)$r['interval_months'], !empty($r['anchor_day']) ? (int)$r['anchor_day'] : null);
         $active = empty($r['end_date']) || $next <= (string)$r['end_date'] ? 1 : 0;
         $pdo->prepare('UPDATE cp_recurring SET next_date = ?, last_document_id = ?, last_run_at = ?, is_active = ? WHERE id = ?')
             ->execute([$next, $docId, date('Y-m-d H:i:s'), $active, $id]);

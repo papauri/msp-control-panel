@@ -231,11 +231,11 @@ if (!$data['payments']) {
     echo '<p class="muted">No payments in this period.</p>';
 } else {
     $shown = array_slice(array_reverse($data['payments']), 0, 300);
-    echo '<div class="scroll"><table class="list rep-table"><thead><tr>' . view_th('Date', 'When it was recorded.') . view_th('Invoice', 'Invoice it was paid against, or Licence payment when recorded on a business page.')
+    echo '<div class="scroll"><table class="list rep-table"><thead><tr>' . view_th('Date', 'When it was recorded.') . view_th('Invoice', 'Invoice it was paid against, or Licence payment when recorded on a business page. A refund (money given back) is a minus amount; void payments are left out.')
         . view_th('Client', 'Who paid.') . view_th('Amount', 'Amount paid.') . view_th('Method', 'How it was paid.') . view_th('Reference', 'Bank or receipt reference.') . '</tr></thead><tbody>';
     foreach ($shown as $p) {
         echo '<tr><td data-label="Date" class="nw">' . e(billing_date((string)$p['created_at'])) . '</td>'
-            . '<td data-label="Invoice" class="nw">' . (!empty($p['document_id']) ? '<a href="document.php?id=' . (int)$p['document_id'] . '">' . e($p['number']) . '</a>' : '<span class="muted">Licence payment</span>') . '</td>'
+            . '<td data-label="Invoice" class="nw">' . ((float)$p['amount'] < 0 ? '<span class="pill pill-grace">Refund</span> ' : '') . (!empty($p['document_id']) ? '<a href="document.php?id=' . (int)$p['document_id'] . '">' . e($p['number']) . '</a>' : '<span class="muted">Licence payment</span>') . '</td>'
             . '<td data-label="Client" class="col-name">' . $clientCell($p, 'client_name') . '</td>'
             . '<td data-label="Amount" class="nw num">' . $money($p['amount'], (string)$p['currency']) . '</td>'
             . '<td data-label="Method">' . ((string)$p['method'] !== '' ? e(ucfirst((string)$p['method'])) : view_empty()) . '</td>'

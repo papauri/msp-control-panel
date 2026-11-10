@@ -278,12 +278,12 @@ function client_summary(PDO $pdo, int $clientId): array
     }
     [$currency, $main, $other] = billing_pick_currency(billing_sum_by_currency($rows, ['owed', 'overdue']), $home, ['owed', 'overdue']);
     [$w, $a] = client_where($client);
-    $st = $pdo->prepare("SELECT * FROM cp_payments WHERE $w ORDER BY id DESC LIMIT 1");
+    $st = $pdo->prepare("SELECT * FROM cp_payments WHERE $w AND voided_at IS NULL AND amount > 0 ORDER BY id DESC LIMIT 1"); // money in, not void
     $st->execute($a);
     $last = $st->fetch();
     $inv = $pdo->prepare("SELECT currency, SUM(total) AS invoiced FROM cp_documents WHERE $w AND kind = 'invoice' AND status IN ('sent','paid') GROUP BY currency");
     $inv->execute($a);
-    $rec = $pdo->prepare("SELECT currency, SUM(amount) AS received FROM cp_payments WHERE $w GROUP BY currency");
+    $rec = $pdo->prepare("SELECT currency, SUM(amount) AS received FROM cp_payments WHERE $w AND voided_at IS NULL GROUP BY currency"); // refunds net off
     $rec->execute($a);
     $totals = billing_sum_by_currency(array_merge($inv->fetchAll(), $rec->fetchAll(), $rows), ['invoiced', 'received', 'owed', 'overdue']);
     return ['owed' => (float)$main['owed'], 'overdue' => (float)$main['overdue'], 'currency' => $currency, 'other' => $other,
@@ -362,7 +362,7 @@ function client_statement(PDO $pdo, int $clientId, ?string $from = null, ?string
         $d['description'] = 'Invoice ' . $d['number'] . ($items ? ': ' . $items[0]['item'] . (count($items) > 1 ? ' and ' . (count($items) - 1) . ' more' : '') : '');
         $invoices[] = $d;
     }
-    $ps = $pdo->prepare("SELECT * FROM cp_payments WHERE $w AND document_id IS NOT NULL ORDER BY created_at, id");
+    $ps = $pdo->prepare("SELECT * FROM cp_payments WHERE $w AND document_id IS NOT NULL AND voided_at IS NULL ORDER BY created_at, id");
     $ps->execute($a);
     $b = billing_statement_build($invoices, $ps->fetchAll(), $from, $to);
     $open = array_values(array_filter(client_open_invoices($pdo, $client), static fn($d) => (string)$d['currency'] === $currency));

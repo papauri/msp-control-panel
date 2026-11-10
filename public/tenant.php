@@ -105,6 +105,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('ok', 'Saved.');
                 back_to($postId);
             }
+        } elseif (($action === 'payment_void' || $action === 'payment_refund') && $postId > 0) {
+            // A licence payment recorded on this page (not against an invoice: those are voided / refunded on the invoice).
+            $str = static fn(string $k): string => isset($_POST[$k]) && is_string($_POST[$k]) ? trim($_POST[$k]) : '';
+            $pay = ctype_digit($str('payment_id')) ? billing_payment($pdo, (int)$str('payment_id')) : null;
+            if (!$pay || (int)$pay['tenant_id'] !== $postId || !empty($pay['document_id'])) {
+                flash_set('error', 'That licence payment was not found on this business. A payment against an invoice is voided or refunded on the invoice.');
+                back_to($postId);
+            }
+            if (!billing_once_consume('pay_fix_' . (int)$pay['id'], $str('once'))) {
+                flash_set('info', 'That was already done (the form was sent twice).');
+                back_to($postId);
+            }
+            if ($action === 'payment_void') {
+                $r = billing_void_payment($pdo, (int)$pay['id'], $str('reason'), $adminId);
+                $done = 'Payment voided. ';
+            } elseif (!preg_match('/^\d{1,11}(\.\d{1,2})?$/', $str('amount'))) {
+                $r = ['ok' => false, 'error' => 'Enter the amount given back as a number, for example 50000.'];
+            } else {
+                $r = billing_refund_payment($pdo, (int)$pay['id'], (float)$str('amount'), $str('method'), $str('reference'), $str('take_back') === '1', false, $adminId);
+                $done = 'Refund recorded. ';
+            }
+            flash_set($r['ok'] ? 'ok' : 'error', $r['ok'] ? $done . ($r['words'] !== '' ? $r['words'] : 'Paid until was not changed.') : $r['error']);
+            if ($r['ok']) {
+                tenant_nudge($pdo, $postId);
+            }
+            back_to($postId);
         } elseif ($action === 'payment' && $postId > 0) {
             $months = isset($_POST['months']) && ctype_digit((string)$_POST['months']) ? (int)$_POST['months'] : 0;
             $amount = isset($_POST['amount']) && is_string($_POST['amount']) ? trim($_POST['amount']) : '';
@@ -118,10 +144,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (mb_strlen($ref) < 3 || mb_strlen($ref) > 190) {
                 $errors[] = 'A payment reference of 3 to 190 characters is required (receipt, transfer or cheque number).';
             }
+            // Owner 2026-11-10: 0 is a free month, and only on a free trial. It lengthens the trial (still a trial, its
+            // emails still go); no payment is recorded (a 0 payment would end the trial and send a receipt for nothing).
+            $zero = !$errors && round((float)$amount, 2) <= BILLING_TOLERANCE;
+            $tNow = $zero ? tenant_find($pdo, $postId) : null;
+            if ($zero && (!$tNow || !trial_is_on($tNow))) {
+                $errors[] = 'Enter the amount received. 0 (a free month) is only for a business on a free trial; this one pays.';
+            }
             // One-time form token: a double click (or a resubmit) must not record the payment twice.
             $once = isset($_POST['once']) && is_string($_POST['once']) ? $_POST['once'] : '';
             if (!$errors && !billing_once_consume('tenant_pay_' . $postId, $once)) {
                 flash_set('info', 'This payment was already recorded (the form was sent twice). Check Recent payments below.');
+                back_to($postId);
+            }
+            if (!$errors && $zero) {
+                $until = status_add_months(max((string)$tNow['trial_until'], $today), $months);
+                $r = trial_change($pdo, $postId, 'date', $until, $adminId, $today, 'Free month' . ($months === 1 ? '' : 's') . ' (' . $months . '), ref ' . $ref);
+                if ($r['error'] !== '') {
+                    flash_set('error', 'No free time was given: ' . $r['error']);
+                } else {
+                    flash_set('ok', $months . ' free month' . ($months === 1 ? '' : 's') . ' added to the free trial: its last day is now '
+                        . billing_date($r['until']) . '. No payment was recorded; the trial carries on.');
+                }
                 back_to($postId);
             }
             // An open invoice that extends the licence when paid would extend it a second time.
@@ -504,7 +548,8 @@ if ($tenant) {
         . '<p class="muted">Extends "paid until" from today or the current paid-until date, whichever is later. '
         . 'For money against an invoice, use Record payment on the invoice instead.</p>'
         . (trial_is_on($tenant) ? '<p class="flash flash-info">This business is on a free trial. A payment recorded here ends the trial: it becomes a paying customer with the normal step-down days. '
-            . 'To set up its monthly billing as well, use <a href="#trial">Convert to paid</a> instead.</p>' : '')
+            . 'To set up its monthly billing as well, use <a href="#trial">Convert to paid</a> instead. '
+            . 'An amount of 0 gives free months instead: the trial carries on that many months longer, and no payment is recorded.</p>' : '')
         . ($extInv ? '<p class="flash flash-info">Invoice <a href="document.php?id=' . (int)$extInv['id'] . '">' . e($extInv['number']) . '</a> extends this licence when it is paid: record the payment there, not here, or the licence would be extended twice.</p>' : '')
         . '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="js-once">' . csrf_field()
         . '<input type="hidden" name="action" value="payment"><input type="hidden" name="id" value="' . (int)$tenant['id'] . '">'
@@ -607,13 +652,52 @@ if ($tenant) {
             . view_th('Months', 'How many months it covered.')
             . view_th('Paid until', 'The paid-until date before and after this payment.', 'Before and after')
             . view_th('Reference', 'Receipt, transfer or cheque number you entered.', 'Receipt or transfer no.')
+            . view_th('', 'Void a payment entered by mistake, or record money given back.', 'Void or refund')
             . '</tr></thead><tbody>';
+        $methods = billing_payment_methods();
         foreach ($payments as $p) {
-            echo '<tr><td data-label="Recorded" class="nw">' . e($p['created_at']) . '</td>'
-                . '<td data-label="Amount" class="nw">' . e($p['amount']) . ' ' . e($p['currency']) . '</td>'
+            $isLive = billing_payment_live($p);
+            $state = billing_payment_state($p, billing_payment_family($pdo, $p));
+            if ($isLive && !empty($p['licence_back_at'])) {
+                $state = trim($state . ' · licence time taken back', ' ·');
+            }
+            $fix = view_empty();
+            if (!empty($p['document_id'])) {
+                $fix = '<a href="document.php?id=' . (int)$p['document_id'] . '#pay">On the invoice</a>';
+            } elseif ($isLive && !billing_payment_is_refund($p)) {
+                $left = billing_payment_refundable($p, billing_payment_family($pdo, $p));
+                $once = e(billing_once_issue('pay_fix_' . (int)$p['id']));
+                $base = '<input type="hidden" name="id" value="' . (int)$tenant['id'] . '"><input type="hidden" name="payment_id" value="' . (int)$p['id'] . '">'
+                    . '<input type="hidden" name="once" value="' . $once . '">';
+                $months = (int)$p['months'];
+                $fix = '<details><summary>Void or refund</summary>';
+                if ($left >= round((float)$p['amount'], 2) - BILLING_TOLERANCE) {
+                    $fix .= '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="spaced js-once" data-confirm="Void this payment? It stops counting everywhere.">' . csrf_field() . $base
+                        . '<input type="hidden" name="action" value="payment_void"><h3>Void: entered by mistake</h3>'
+                        . '<p class="muted">The payment stops counting' . ($months > 0 && empty($p['licence_back_at']) ? ' and the ' . $months . ' month' . ($months === 1 ? '' : 's') . ' it added are taken back' : '') . '.</p>'
+                        . '<label>Why<input type="text" name="reason" required minlength="5" maxlength="255" placeholder="Entered twice"></label>'
+                        . '<button type="submit" class="danger">Void payment</button></form>';
+                }
+                $fix .= '<form method="post" action="tenant.php?id=' . (int)$tenant['id'] . '" class="spaced js-once" data-confirm="Record this refund?">' . csrf_field() . $base
+                    . '<input type="hidden" name="action" value="payment_refund"><h3>Refund: money given back</h3>'
+                    . '<p class="muted">Up to ' . e(billing_money($left, (string)$p['currency'])) . '. It counts as money out on the day you record it.</p>'
+                    . '<label>Amount given back<input type="text" name="amount" inputmode="decimal" required value="' . e(number_format($left, 2, '.', '')) . '"></label>'
+                    . '<label>Given back by<select name="method" required>';
+                foreach ($methods as $mk => $ml) {
+                    $fix .= '<option value="' . e($mk) . '">' . e($ml) . '</option>';
+                }
+                $fix .= '</select></label><label>Reference<input type="text" name="reference" required minlength="3" maxlength="190"></label>'
+                    . ($months > 0 && empty($p['licence_back_at']) ? '<label class="check"><input type="checkbox" name="take_back" value="1" checked> Take back the ' . $months . ' month'
+                        . ($months === 1 ? '' : 's') . ' it added to paid until</label>' : '')
+                    . '<button type="submit" class="danger">Record refund</button></form></details>';
+            }
+            echo '<tr' . (!$isLive ? ' class="muted"' : '') . '><td data-label="Recorded" class="nw">' . e($p['created_at']) . '</td>'
+                . '<td data-label="Amount" class="nw">' . (!$isLive ? '<s>' : '') . e($p['amount']) . ' ' . e($p['currency']) . (!$isLive ? '</s>' : '')
+                . ($state !== '' ? '<br><span class="pill pill-' . (!$isLive ? 'suspended' : 'grace') . '">' . e($state) . '</span>' : '') . '</td>'
                 . '<td data-label="Months">' . (int)$p['months'] . '</td>'
                 . '<td data-label="Paid until" class="nw">' . e($p['paid_until_before']) . ' to ' . e($p['paid_until_after']) . '</td>'
-                . '<td data-label="Reference">' . (($p['reference'] ?? '') !== '' ? e($p['reference']) : view_empty()) . '</td></tr>';
+                . '<td data-label="Reference">' . (($p['reference'] ?? '') !== '' ? e($p['reference']) : view_empty()) . '</td>'
+                . '<td data-label="Void or refund">' . $fix . '</td></tr>';
         }
         echo '</tbody></table></div>';
     }

@@ -172,6 +172,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ? ($action === 'reminder' ? 'Reminder sent to ' : ucfirst($kindLabel) . ' sent to ') . implode(', ', (array)($r['to'] ?? $to)) . '.'
                 : 'Not sent: ' . (string)($r['error'] ?? 'unknown error'));
             doc_back($postId);
+        } elseif ($cur && ($action === 'payment_void' || $action === 'payment_refund')) {
+            $pay = ctype_digit($s('payment_id')) ? billing_payment($pdo, (int)$s('payment_id')) : null;
+            if (!$pay || (int)$pay['document_id'] !== $postId) {
+                flash_set('error', 'That payment was not found on this invoice.');
+                doc_back($postId);
+            }
+            if (!billing_once_consume('pay_fix_' . (int)$pay['id'], $s('once'))) {
+                flash_set('info', 'That was already done (the form was sent twice). See Payments below.');
+                doc_back($postId);
+            }
+            if ($action === 'payment_void') {
+                $r = billing_void_payment($pdo, (int)$pay['id'], $s('reason'), $adminId);
+                $done = 'Payment voided. ';
+            } else {
+                $amount = trim($s('amount'));
+                if (!preg_match('/^\d{1,11}(\.\d{1,2})?$/', $amount)) {
+                    flash_set('error', 'Enter the amount given back as a number, for example 50000.');
+                    doc_back($postId);
+                }
+                $r = billing_refund_payment($pdo, (int)$pay['id'], (float)$amount, $s('method'), $s('reference'), false, $s('void_invoice') === '1', $adminId);
+                $done = 'Refund recorded. ';
+            }
+            flash_set($r['ok'] ? 'ok' : 'error', $r['ok'] ? $done . $r['words'] : $r['error']);
+            doc_back($postId, $r['ok'] && !empty($pay['tenant_id']) ? (int)$pay['tenant_id'] : 0);
         } elseif ($cur && $action === 'payment') {
             if (!billing_once_consume('doc_pay_' . $postId, $s('once'))) {
                 flash_set('info', 'This payment was already recorded (the form was sent twice). See Payments below.');
@@ -197,6 +221,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pay = ctype_digit($s('payment_id')) ? billing_payment($pdo, (int)$s('payment_id')) : null;
             if (!$pay || (int)$pay['document_id'] !== $postId) {
                 flash_set('error', 'That payment was not found on this invoice.');
+                doc_back($postId);
+            }
+            if (!billing_payment_live($pay) || billing_payment_is_refund($pay)) {
+                flash_set('error', !billing_payment_live($pay) ? 'This payment is void, so it has no receipt.' : 'This is a refund, so it has no receipt.');
                 doc_back($postId);
             }
             if ($action === 'receipt_pdf') {
@@ -622,22 +650,56 @@ if (!$isNew) {
         if ($payments) {
             $methods = billing_payment_methods();
             echo '<section class="card"><h2>Payments</h2><div class="scroll"><table><thead><tr>'
-                . view_th('Recorded', 'When the payment was entered.') . view_th('Amount', 'Money received.')
+                . view_th('Recorded', 'When the payment was entered.') . view_th('Amount', 'Money received (a refund, money given back, is a minus amount).')
                 . view_th('Paid by', 'How it was paid.') . view_th('Reference', 'Receipt, transfer or cheque number.')
-                . view_th('Receipt', 'Download the receipt, or email it.') . '</tr></thead><tbody>';
+                . view_th('Receipt', 'Download the receipt, or email it. Void or refund a payment here too.') . '</tr></thead><tbody>';
             foreach ($payments as $p) {
-                echo '<tr><td data-label="Recorded" class="nw">' . e($p['created_at']) . '</td>'
-                    . '<td data-label="Amount" class="nw num">' . e(billing_money((float)$p['amount'], (string)$p['currency'])) . '</td>'
+                $state = billing_payment_state($p, $payments);
+                $isLive = billing_payment_live($p);
+                $live = $isLive && !billing_payment_is_refund($p);
+                $fix = '';
+                if ($live) {
+                    $left = billing_payment_refundable($p, $payments);
+                    $fixOnce = e(billing_once_issue('pay_fix_' . (int)$p['id']));
+                    $fix = '<details><summary>Void or refund</summary>';
+                    if ($left >= round((float)$p['amount'], 2) - BILLING_TOLERANCE) {
+                        $fix .= '<form method="post" action="document.php?id=' . (int)$doc['id'] . '" class="spaced js-once" data-confirm="Void this payment? It stops counting everywhere and the invoice balance goes back up.">' . $hidden
+                            . '<input type="hidden" name="action" value="payment_void"><input type="hidden" name="payment_id" value="' . (int)$p['id'] . '"><input type="hidden" name="once" value="' . $fixOnce . '">'
+                            . '<h3>Void: entered by mistake</h3><p class="muted">The payment stops counting; no money went back. '
+                            . ((int)$doc['extend_months'] > 0 ? 'If the invoice is no longer paid in full, the licence time it added is taken back.' : '') . '</p>'
+                            . '<label>Why<input type="text" name="reason" required minlength="5" maxlength="255" placeholder="Entered twice"></label>'
+                            . '<button type="submit" class="danger">Void payment</button></form>';
+                    }
+                    $fix .= '<form method="post" action="document.php?id=' . (int)$doc['id'] . '" class="spaced js-once" data-confirm="Record this refund? The invoice balance goes back up by the amount.">' . $hidden
+                        . '<input type="hidden" name="action" value="payment_refund"><input type="hidden" name="payment_id" value="' . (int)$p['id'] . '"><input type="hidden" name="once" value="' . $fixOnce . '">'
+                        . '<h3>Refund: money given back</h3><p class="muted">Up to ' . e(billing_money($left, (string)$p['currency'])) . '. It counts as money out on the day you record it. '
+                        . 'The invoice then shows a balance due again (and reminders follow), unless nothing is left paid and you cancel the sale below.</p>'
+                        . '<label>Amount given back<input type="text" name="amount" inputmode="decimal" required value="' . e(number_format($left, 2, '.', '')) . '"></label>'
+                        . '<label>Given back by<select name="method" required>';
+                    foreach (billing_payment_methods() as $mk => $ml) {
+                        $fix .= '<option value="' . e($mk) . '"' . ($mk === (string)$p['method'] ? ' selected' : '') . '>' . e($ml) . '</option>';
+                    }
+                    $fix .= '</select></label><label>Reference<input type="text" name="reference" required minlength="3" maxlength="190"></label>'
+                        . '<label class="check"><input type="checkbox" name="void_invoice" value="1" checked> If nothing is left paid, void the invoice (sale cancelled, no reminders)</label>'
+                        . '<button type="submit" class="danger">Record refund</button></form></details>';
+                }
+                echo '<tr' . (!$isLive ? ' class="muted"' : '') . '><td data-label="Recorded" class="nw">' . e($p['created_at']) . '</td>'
+                    . '<td data-label="Amount" class="nw num">' . (!$isLive ? '<s>' : '') . e(billing_money((float)$p['amount'], (string)$p['currency'])) . (!$isLive ? '</s>' : '')
+                    . ($state !== '' ? '<br><span class="pill pill-' . (!$isLive ? 'suspended' : 'grace') . '">' . e($state) . '</span>' : '') . '</td>'
                     . '<td data-label="Paid by">' . e($methods[(string)$p['method']] ?? (string)$p['method']) . '</td>'
-                    . '<td data-label="Reference">' . e($p['reference']) . '</td>'
-                    . '<td data-label="Receipt"><form method="post" action="document.php?id=' . (int)$doc['id'] . '" class="inline">' . $hidden
+                    . '<td data-label="Reference">' . e($p['reference']) . '</td>';
+                if (!$live) {
+                    echo '<td data-label="Receipt">' . view_empty() . '</td></tr>';
+                    continue;
+                }
+                echo '<td data-label="Receipt"><form method="post" action="document.php?id=' . (int)$doc['id'] . '" class="inline">' . $hidden
                     . '<input type="hidden" name="action" value="receipt_pdf"><input type="hidden" name="payment_id" value="' . (int)$p['id'] . '">'
                     . '<button type="submit" class="secondary">Download receipt</button></form> '
                     . '<details><summary>Send receipt</summary><form method="post" action="document.php?id=' . (int)$doc['id'] . '" class="spaced">' . $hidden
                     . '<input type="hidden" name="action" value="receipt_send"><input type="hidden" name="payment_id" value="' . (int)$p['id'] . '">'
                     . '<label>To<input type="text" name="to" required maxlength="500" value="' . e($defTo) . '"></label>'
                     . '<label>Copy to<input type="text" name="cc" maxlength="500" value="' . e($defCc) . '"></label>'
-                    . '<button type="submit">Send receipt</button></form></details></td></tr>';
+                    . '<button type="submit">Send receipt</button></form></details>' . $fix . '</td></tr>';
             }
             echo '</tbody></table></div></section>';
         }

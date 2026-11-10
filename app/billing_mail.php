@@ -241,6 +241,12 @@ function billing_receipt_parts(PDO $pdo, int $paymentId): ?array
     if (!$payment) {
         return null;
     }
+    if (!empty($payment['voided_at'])) {
+        return ['error' => 'This payment is void, so it has no receipt.'];
+    }
+    if (!empty($payment['refund_of']) || (float)$payment['amount'] < 0) {
+        return ['error' => 'This is a refund (money given back), so it has no receipt.'];
+    }
     $methods = function_exists('billing_payment_methods') ? billing_payment_methods() : [];
     $m = (string)($payment['method'] ?? '');
     $payment['method_label'] = $methods[$m] ?? ($m !== '' ? ucfirst(str_replace('_', ' ', $m)) : '');
@@ -252,7 +258,7 @@ function billing_receipt_parts(PDO $pdo, int $paymentId): ?array
         if (!$doc) {
             return ['error' => 'The invoice for this payment was not found.'];
         }
-        $ps = $pdo->prepare('SELECT id, amount FROM cp_payments WHERE document_id = ? ORDER BY id');
+        $ps = $pdo->prepare('SELECT id, amount FROM cp_payments WHERE document_id = ? AND voided_at IS NULL ORDER BY id'); // refunds count, void rows never
         $ps->execute([(int)$doc['id']]);
         [$doc, $payment] = billing_mail_receipt_state($doc, $ps->fetchAll(), $payment);
         $tenantId = $tenantId ?: (!empty($doc['tenant_id']) ? (int)$doc['tenant_id'] : null);
