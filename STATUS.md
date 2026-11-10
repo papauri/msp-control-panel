@@ -122,12 +122,14 @@ Everything up to commit `5022fe1` is live:
   went live in both hotels; the panel needs no change.
 
 ## In progress: the hotel's Super Admin on the panel (owner 2026-11-11)
-**Built, not pushed. Owner to apply migration 012, then OK the push.** The hotels shipped the Super Admin
+**LIVE 2026-11-11 (panel `63d8220`, owner OK).** Migration 012 applied after an export (`cp-export-20261110-170152.sql`);
+`--db` tests not run (refused by the permission check), pure 80/0. Hotel migration 080 applied at both hotels and account #1
+is super admin at both. The hotels shipped the Super Admin
 (`admin_users.is_super_admin`, hotel migration 080, role stays `admin`; commits `0578bae` Rosalyn's / `5e8645d` Liwonde).
-- **Hotels (both, identical, not pushed):** `includes/licence-staff.php` adds `super_admin` 0|1 to each staff report row
+- **Hotels (both, identical, pushed: Rosalyn's `fc467ab`, Liwonde `09ce502`):** `includes/licence-staff.php` adds `super_admin` 0|1 to each staff report row
   (0 before hotel migration 080); `scripts/tests/licence_staff.php` checks it (53 pure).
 - **Panel:**
-  - `migrations/012_hms_super_admin.sql`: `cp_hms_staff.is_super_admin` (additive). **Written, NOT applied.** It must be
+  - `migrations/012_hms_super_admin.sql`: `cp_hms_staff.is_super_admin` (additive). **Applied 2026-11-11.** It must be
     applied before the panel code goes live: the staff report INSERT writes the column and would fail without it.
   - `app/hms.php`: the cleaner reads `super_admin` (missing = 0); effective permissions: super admin = all, admin = all
     minus denies; every change to a super admin refused; a role change on a limited admin refused (same order and
@@ -139,7 +141,7 @@ Everything up to commit `5022fe1` is live:
   the panel live today ignores the new `super_admin` field.
 
 ## Waiting on the owner
-- Super Admin on the panel: apply migration 012, then OK the push (see above).
+- Super Admin on the panel: run `php scripts/tests/hms_test.php --db` once, and look at the staff page.
 
 ## Plan prices (set 2026-11-10 at the owner's request, live data, audited; the owner can change them on the Catalog page)
 | Plan | Price (MWK) |
