@@ -116,6 +116,10 @@ Everything up to commit `5022fe1` is live:
 - **Hotels:** the `view_only` permission, plus `includes/view-only.php` (see each hotel's `STATUS.md`).
 - Pushed with the owner's OK: the hotels first, then the panel. Another session also works in the hotel folders: stage
   by name only.
+- **Follow-up, pushed with the owner's OK:** the owner found that Export and New booking were still clickable on Liwonde's
+  view-only trial. The fix is in the hotels only (`includes/view-only.php` and its test, in both repos). Exports are now
+  refused during a view-only trial, and the greying reaches page headers and every link. See Liwonde's `STATUS.md`. It
+  went live in both hotels; the panel needs no change.
 
 ## Waiting on the owner
 - Nothing blocking.
