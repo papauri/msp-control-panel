@@ -202,7 +202,7 @@ real screens, with a business-type picker at the start (the 7 types in `app/cata
 track that shows this panel. The owner calls it the biggest selling point; it may go on the ProManaged IT website later.
 - Agent: `.claude/agents/artifacts-lead.md` (identical in this repo and both hotel repos). Every department in all
   three repos knows about it: when a screen a slide mirrors changes, tell the artifacts lead (daily, only if needed).
-- Source: `C:\Users\john-paul.chirwa\OneDrive\MSP\Showcase\` (not in git): `index.html` shell, `hms.js` (product
+- Source: `C:\Users\john-paul.chirwa\OneDrive\MSP\Showcase\` (private repo `papauri/promanaged-showcase`, pushed by the orchestrator): `index.html` shell, `hms.js` (product
   slides, hotel-repo lead), `panel.js` ("Managed for you" slides, this repo's lead), `SHOWCASE.md` (slide to source map).
 - Rules: no real business, guest, staff or figure; read code only (never `--db`, `.env` or exports); show only what
   the code does today.
