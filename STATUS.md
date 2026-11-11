@@ -17,8 +17,9 @@ staff changes.
   4. In-app guides: `public/guide.php` and `public/guide-sales.php`
 
 ## Owner rules (always)
-- **Commits and pushes:** commit or push only when the owner asks, because pushing `main` goes live. Stage files by name
-  (never `-a` / `-A`). Never stash.
+- **Commits and pushes (owner 2026-11-12, replaces "only when the owner asks"):** always commit and push to `main` as soon
+  as work is done and checked; do not wait to be asked. Pushing `main` goes live, so push only finished, tested work.
+  Stage files by name (never `-a` / `-A`). Never stash.
 - **Migrations:** apply every DB migration yourself (`php scripts/migrate.php`). After each one:
   1. Run the `--db` tests.
   2. Refresh the offline copy with `php scripts/export-db.php` (writes `database/cp-export-*.sql`, git-ignored).
@@ -215,6 +216,11 @@ track that shows this panel. The owner calls it the biggest selling point; it ma
   (none exists), our own reports, the Automations daily-job card, send the demo (not built).
 - Link format: one link opens the tour on one business type for a named prospect ("Prepared for ..."). The exact
   format is in `Showcase\SHOWCASE.md` under "Link format". The tour's `#send` page builds it by hand for now.
+
+- Proposal mode (owner 2026-11-12): the `~name` part of the link turns the tour into a proposal for that business: its
+  name replaces the sample business on every page, no "sample" wording, a "How it works" explanation on every page, no
+  provider names on show. Prospects get a link on our own web address, never a claude.ai link; the built page is
+  `Showcase\dist\index.html`. So "Send the demo" below sends a proposal, and needs the prospect's business name.
 
 ### Task, not started: send the demo from the panel by business type (owner 2026-11-12)
 The owner wants the demo sent from here, matched to the prospect's business type.
