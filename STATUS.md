@@ -206,7 +206,26 @@ track that shows this panel. The owner calls it the biggest selling point; it ma
   slides, hotel-repo lead), `panel.js` ("Managed for you" slides, this repo's lead), `SHOWCASE.md` (slide to source map).
 - Rules: no real business, guest, staff or figure; read code only (never `--db`, `.env` or exports); show only what
   the code does today.
-- State: product slides being built first; panel slides next.
+- State 2026-11-12: first tour published (9 product + 5 panel pages). Owner then asked for a full sales pitch: more
+  pages, more interaction, "little space for questions". Now being built: about 10 more product pages (`hms-more.js`),
+  pitch pages (`pitch.js`: opening, a day at the business, what you get, questions owners ask, how you get started,
+  closing), chapters + Contents menu, and 4–5 more panel pages (`panel.js`).
+- Built and published 2026-11-12 (private link in `Showcase\SHOWCASE.md` under "Published"; each publish makes a new link, owner's rule): panel track now 10 pages (added modules,
+  billing schedule + outbox, statement, the Assistant package, audit trail). Not shown: a client-facing account page
+  (none exists), our own reports, the Automations daily-job card, send the demo (not built).
+- Link format: one link opens the tour on one business type for a named prospect ("Prepared for ..."). The exact
+  format is in `Showcase\SHOWCASE.md` under "Link format". The tour's `#send` page builds it by hand for now.
+
+### Task, not started: send the demo from the panel by business type (owner 2026-11-12)
+The owner wants the demo sent from here, matched to the prospect's business type.
+- On a client/prospect (`public/client.php`) and on a business (`public/tenant.php`): "Send the demo". Business type
+  defaults from the record (the 7 types in `app/catalog.php`), editable; the email goes through the normal outbox
+  with the link built from the Showcase link format and the prospect's business name; logged in the audit trail.
+- One setting for the tour's public address (Settings page). Nothing is sent while it is empty.
+- Blocked on the owner: where the public tour lives. Today it is a private claude.ai artifact whose link changes on
+  every publish, which a prospect
+  cannot open until it is shared or the tour is put on the ProManaged IT website.
+- Until this ships, no showcase page may show "send a demo" as a panel feature.
 
 ## Task, not started: HMS security and system health from the panel (owner 2026-11-11)
 **Do this on the owner's NON-work device only.** A first build was started on the work laptop on 2026-11-11 and fully
