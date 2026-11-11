@@ -196,6 +196,32 @@ newest models are picked and tested), Send. Watch "Sent" turn Done and "At the h
 - Tests: ai 112 pure / 144 with `--db`; all 18 pure suites pass; hms `--db` 107/0.
 - Pushed 2026-11-11 (owner's standing OK: commit and push after each piece of work).
 
+## Task, not started: HMS security and system health from the panel (owner 2026-11-11)
+**Do this on the owner's NON-work device only.** A first build was started on the work laptop on 2026-11-11 and fully
+undone at the owner's request (no files, no DB tables, nothing committed). The laptop's antivirus quarantined test files
+holding web-shell samples, so: never write malware samples to disk, assemble them in memory only.
+
+**Owner asked:** spot vulnerabilities and unusual activity in every HMS through the panel, strict rules plus AI when
+available. Security leads and AI leads do everyday checks. Watch unusual sign-ins, geo (countries), changes to key details
+in each business (bank / mobile-money / email / site address), "virus definitions" checked. Logic must last decades.
+
+**Design worked out (reuse it):**
+- Rules decide, with stable ids; AI only summarises for the leads (redact usernames / IPs, mark hotel text as data), never
+  closes a finding. Alert only: nothing at a hotel is changed automatically.
+- What ages is data: a versioned definitions file (sensitive-setting name patterns, known-bad code patterns, PHP support
+  end dates, private paths to probe, review-by date), signed by the panel and fetched by each hotel when newer.
+- Hotel side (both repos, new `includes/licence-security.php`, called after the staff step in `rh_licence_staff_after_check`
+  and in `scripts/licence-check.php`; no DDL): hourly report of `admin_activity_log` rows after a cursor (login_success /
+  failed / blocked, password resets, super_admin_changed, page_action), HMAC fingerprints of watched `site_settings` with a
+  masked hint (never values), file integrity against `.git/index` (stat quick check hourly, full read daily; baseline list
+  if no git), unknown runnable files (esp. in upload folders), pattern hits, PHP / disk / .env permission facts, ClamAV date.
+- Panel side: migration for findings / events / state / daily sign-off / AI reviews / geo ranges; report endpoint with the
+  same key + domain check; staff-list diffs (new admin, role raised, email changed); rules on `cp_licence_checks` (new server
+  IP, refused check-ins, silence); outside probes of each site (cert, https redirect, headers, `.env` / `.git` / backups not
+  readable); hourly cron with email to leads for High/Critical and a daily digest; geo from an offline DB-IP country list
+  (no IP sent outside); a Security page with the daily sign-off.
+- Note: `scripts/tests/security_test.php` already exists (another suite): pick a different name for new tests.
+
 ## Waiting on the owner
 - The Assistant (AI): add a catalog plan for the add-on (price is the owner's call), then do the first real send
   (business > Manage the Assistant) and check "Sent" turns Done and "At the hotel now" fills in.
