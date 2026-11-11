@@ -1,7 +1,7 @@
 # STATUS: MSP licence control panel
 
 **Read this first.** Any agent (Claude, Cline, another provider) should be able to continue from this file alone. It is
-kept current during work, not only at the end. Last updated: **2026-11-11**.
+kept current during work, not only at the end. Last updated: **2026-11-12**.
 
 ## What this is
 This is a private PHP 8.3 / MySQL panel that licenses and bills the owner's hotel PMS / HMS installs. Each HMS calls
@@ -195,6 +195,18 @@ newest models are picked and tested), Send. Watch "Sent" turn Done and "At the h
   Possible follow-up: carry prices in `ai_setup` (hotel change) or refresh the hotels' catalog.
 - Tests: ai 112 pure / 144 with `--db`; all 18 pure suites pass; hms `--db` 107/0.
 - Pushed 2026-11-11 (owner's standing OK: commit and push after each piece of work).
+
+## In progress: the sales showcase and its artifacts lead (owner 2026-11-12)
+One organisation, one demo: an anonymised, interactive presentation of the product's core features, drawn like the
+real screens, with a business-type picker at the start (the 7 types in `app/catalog.php`) and a "Managed for you"
+track that shows this panel. The owner calls it the biggest selling point; it may go on the ProManaged IT website later.
+- Agent: `.claude/agents/artifacts-lead.md` (identical in this repo and both hotel repos). Every department in all
+  three repos knows about it: when a screen a slide mirrors changes, tell the artifacts lead (daily, only if needed).
+- Source: `C:\Users\john-paul.chirwa\OneDrive\MSP\Showcase\` (not in git): `index.html` shell, `hms.js` (product
+  slides, hotel-repo lead), `panel.js` ("Managed for you" slides, this repo's lead), `SHOWCASE.md` (slide to source map).
+- Rules: no real business, guest, staff or figure; read code only (never `--db`, `.env` or exports); show only what
+  the code does today.
+- State: product slides being built first; panel slides next.
 
 ## Task, not started: HMS security and system health from the panel (owner 2026-11-11)
 **Do this on the owner's NON-work device only.** A first build was started on the work laptop on 2026-11-11 and fully
