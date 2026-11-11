@@ -226,6 +226,9 @@ The owner wants the demo sent from here, matched to the prospect's business type
   every publish, which a prospect
   cannot open until it is shared or the tour is put on the ProManaged IT website.
 - Until this ships, no showcase page may show "send a demo" as a panel feature.
+- Showcase sync 2026-11-12 (Showcase be6e956, hotel commits 4cc94f4, 43a4318, e09e3a1, 37b62ef, a2b9e5f): bookings-phone
+  matches the shipped phone rows; history shows email steps; documents start with Convert to invoice; new pages
+  quote-invoice and emails-log. No panel pages changed. Not published yet (next publish makes a new link).
 
 ## Task, not started: HMS security and system health from the panel (owner 2026-11-11)
 **Do this on the owner's NON-work device only.** A first build was started on the work laptop on 2026-11-11 and fully
