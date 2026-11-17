@@ -16,6 +16,12 @@ staff changes.
   3. `MOVING.md` / `EMERGENCY.md`
   4. In-app guides: `public/guide.php` and `public/guide-sales.php`
 
+## Token cost controls (owner 2026-11-17)
+- `.claude/agents/artifacts-lead.md` (byte-identical in both hotel repos): `maxTurns: 100`, `autoCompactWindow:
+  200000`, effort medium; showcase sync once a week from the SYNC QUEUE, not after each ship.
+- Workspace-wide status line (`~/.claude/statusline.mjs`) shows context size and says when to /compact or /clear.
+- The hotel repos got the full set (turn caps, qa-quick, read guard, port-commit script): see their `STATUS.md`.
+
 ## Owner rules (always)
 - **Commits and pushes (owner 2026-11-12, replaces "only when the owner asks"):** always commit and push to `main` as soon
   as work is done and checked; do not wait to be asked. Pushing `main` goes live, so push only finished, tested work.
