@@ -285,8 +285,8 @@ in each business (bank / mobile-money / email / site address), "virus definition
 The annual discount setting is still 0%.
 
 ## Tests
-- `.claude/LIVE_TARGETS` (local only, kept out of git by `.git/info/exclude`; 2026-11-21) names the panel's live
-  database, so the shared Claude guard (`AI-Setup/hooks/guard.mjs`) blocks any mysql/php command that names it.
+- Owner 2026-11-21: no guard on the panel's database connection (DB tests are needed always), so the panel has no
+  `.claude/LIVE_TARGETS`.
 - Pure, safe anywhere: `for f in scripts/tests/*_test.php; do php $f; done` (18 suites, all passing on 2026-11-11).
 - On the live DB, in a single rolled-back transaction, `cp_*` tables only:
   - `php scripts/tests/clients_test.php --db` (114)
