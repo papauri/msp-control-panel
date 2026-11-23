@@ -98,6 +98,8 @@ the window; (2) double-check the backup logic; (3) see every push to git (commit
   commits do not touch it; never reset it). LATER: a pull over 5 min lets the next `--report` read a partial file
   (flock); hotel "did not answer" path cuts before scrubbing; backup cron lines in guide/README use plain `php`. LATER: guide section 18 / spec / deploy-check
   comments still show plain `php`.
+  (7) 2026-11-24: cron may run every minute (a running pull is waited for: Liwonde `797c01b`, Rosalyn's `6bcc01b`, panel
+  `2fb9888`). Maintenance "Offline now" for N minutes/hours (`a382467`). Not yet seen on the live server.
 - LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
   min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only
   by the nudge (else up to ~1 h); admins cannot open the Licence page during an admin window.
