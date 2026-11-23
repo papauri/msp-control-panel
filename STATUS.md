@@ -71,14 +71,15 @@ the window; (2) double-check the backup logic; (3) see every push to git (commit
   - LATER (owner's call): the panel's backups and signing key never leave its server (no off-site copy or reminder);
     hotel backups cover the database only, not uploaded images; no restore round-trip test on either side; the panel
     never flags an old off-site download.
-- **State (2026-11-23):** both features reviewed by Opus (blockers fixed). Hotels PUSHED: Liwonde `46efbca`, Rosalyn's
-  `974003a` (inert until the panel sends a window). Panel committed locally, **NOT pushed**: applying migrations
-  014 + 015 to the live DB was refused by this session's permission check, so it waits on the owner. Export taken
-  first: `database/cp-export-20261123-022317.sql`.
-- **Next (exact):** owner runs or OKs `php scripts/migrate.php` (014 + 015, additive), then `php scripts/tests/maintenance_test.php --db`,
-  `deploy_test.php --db`, `hms_test.php --db`, update `database/README.txt`, then `git push origin main`. Pushing
-  before 015 makes the Deployments page return 500. Then: build the hotel side of Deployments from
-  `.claude/DEPLOY_HOTEL_SPEC.md` (Liwonde first, port), and the owner sets up the 5-minute cron (Guide section 18).
+- **State (2026-11-23): LIVE.** Both features reviewed by Opus (blockers fixed). Hotels pushed: Liwonde `46efbca`,
+  Rosalyn's `974003a`. Migrations 014 + 015 applied to the live DB with the owner's OK (export before:
+  `cp-export-20261123-022317.sql`, after: `cp-export-20261123-022826.sql`). `--db` tests: maintenance 92, deploy 162,
+  hms 107, ai 144, clients 114, trials 270, all 0 failed; 20 pure suites pass. Panel pushed.
+- **Next:** (1) owner: first maintenance window on Liwonde (tenant 2) only, short, once Liwonde's live copy has pulled
+  `46efbca`; check "Seen by the hotel" fills in. (2) owner: GitHub read-only token on Deployments + the 5-minute cron
+  for the panel (Guide section 18); first real uapi run is the test. (3) Hotel side of Deployments from
+  `.claude/DEPLOY_HOTEL_SPEC.md` (Liwonde first, port): owner to say when; until then hotel requests lapse.
+  (4) Once live, Rosalyn's writes one new `site_settings` row (`licence_maintenance`) at its next check-in.
 - LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
   min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only
   by the nudge (else up to ~1 h); admins cannot open the Licence page during an admin window.
