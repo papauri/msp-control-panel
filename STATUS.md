@@ -87,9 +87,9 @@ the window; (2) double-check the backup logic; (3) see every push to git (commit
   **`/usr/local/bin/php`** (8.1, same as the sites). Cron lines added for Liwonde (`/home/p601229/liwonde_sun_hotel`)
   and Rosalyn's (`/home/p601229/rosalyns_hotel`) with `/usr/local/bin/php`; `--want` tested from cron = exit 1.
   GitHub token saved; both live copies added and report their commit (up to date). First Liwonde request 11:49
-  waiting on its run. Panel cron not added yet. Owner 2026-11-23: Update from Remote asks for the password only
-  (`auth_reconfirm_password`, `a1cd0b6`). LATER: guide section 18 / spec / deploy-check comments still show plain
-  `php`; no direct test of `auth_reconfirm_password`.
+  waiting on its run. Panel cron not added yet. Owner 2026-11-23: Update from Remote is one click, no password or code
+  (signed-in + CSRF + audit log; it can only pull what is on GitHub). LATER: guide section 18 / spec / deploy-check
+  comments still show plain `php`.
 - LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
   min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only
   by the nudge (else up to ~1 h); admins cannot open the Licence page during an admin window.

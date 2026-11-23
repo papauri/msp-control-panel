@@ -328,24 +328,6 @@ function auth_reconfirm(PDO $pdo, int $adminId, string $password, string $code):
     return false;
 }
 
-// Password only (no 6-digit code), for a step whose worst case is small: Update from Remote can only pull the branch
-// already pushed to GitHub (owner 2026-11-23). Same rate limit as auth_reconfirm; a failure is audited.
-function auth_reconfirm_password(PDO $pdo, int $adminId, string $password): bool
-{
-    if (!rate_limit_hit($pdo, 'reconfirm:' . $adminId, 5, 900) || strlen($password) > 1024) {
-        return false;
-    }
-    $st = $pdo->prepare('SELECT password_hash FROM cp_admins WHERE id = ?');
-    $st->execute([$adminId]);
-    $hash = $st->fetchColumn();
-    if ($hash !== false && password_verify($password, (string)$hash)) {
-        return true;
-    }
-    audit_log($pdo, $adminId, 'reconfirm_failed', null, null, null);
-    usleep(random_int(150000, 350000));
-    return false;
-}
-
 // Returns the logged-in admin row or null (no redirect).
 function auth_current(PDO $pdo): ?array
 {
