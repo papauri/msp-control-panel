@@ -1,6 +1,6 @@
 <?php
 // Deployments (owner 2026-11-23): every commit pushed to GitHub, which one each live copy runs, and "Update from
-// Remote". No cPanel credentials: the button records a request (password + a new 6-digit code, audited) and a cron job on
+// Remote". No cPanel credentials: the button records a request (password only, owner 2026-11-23; audited) and a cron job on
 // that server runs the pull and reports back (app/deploy.php). The panel only pulls; it never pushes code.
 require_once __DIR__ . '/../app/bootstrap.php';
 web_boot();
@@ -57,8 +57,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: deploy.php');
             exit;
         }
-        if (!auth_reconfirm($pdo, $me, $s('my_password'), (string)preg_replace('/\D/', '', $s('my_code')))) {
-            flash_set('error', 'Your password or code was not accepted. Nothing was asked for. Use a new code (each code works once).');
+        if (!auth_reconfirm_password($pdo, $me, $s('my_password'))) { // password only, no code (owner 2026-11-23)
+            flash_set('error', 'Your password was not accepted. Nothing was asked for.');
             header('Location: deploy.php?id=' . (int)$t['id']);
             exit;
         }
@@ -130,7 +130,7 @@ echo '<h1>Deployments</h1>';
 view_flash();
 ?>
 <div class="card">
-    <p>Each live copy below is a cPanel <strong>Git Version Control</strong> clone of a GitHub repository. This page lists the commits pushed to its branch, shows which one is live, and lets you ask that server to run <strong>Update from Remote</strong> (needs your password and a new 6-digit code; written to the audit log).</p>
+    <p>Each live copy below is a cPanel <strong>Git Version Control</strong> clone of a GitHub repository. This page lists the commits pushed to its branch, shows which one is live, and lets you ask that server to run <strong>Update from Remote</strong> (needs your password; written to the audit log).</p>
     <p class="muted">No cPanel password or token is kept here. Pressing the button only records the request: a cron job on that server picks it up within minutes, pulls the branch from GitHub and reports back. Nothing is ever pushed to GitHub from here. Setting up: <a href="guide.php#deployments">Guide, section 18</a>.</p>
     <?php if (!$hasBox): ?><p class="flash flash-error">This panel has no signing key, so the GitHub token cannot be saved (Signing key page).</p><?php endif; ?>
 </div>
@@ -198,11 +198,10 @@ view_flash();
 <div class="tools stack">
 <form method="post" action="deploy.php" class="tool tool-warn" autocomplete="off">
     <h3>Update from Remote</h3>
-    <p class="muted">Asks the server to pull <strong><?= e($t['branch']) ?></strong> from GitHub (the same as the button in cPanel &gt; Git Version Control). This changes the live site. <?= $t['tenant_id'] === null ? 'The cron job runs it within 5 minutes.' : 'The site runs it after its next check-in, from its own cron job.' ?> Needs your password and a new 6-digit code.</p>
+    <p class="muted">Asks the server to pull <strong><?= e($t['branch']) ?></strong> from GitHub (the same as the button in cPanel &gt; Git Version Control). This changes the live site. <?= $t['tenant_id'] === null ? 'The cron job runs it within 5 minutes.' : 'The site runs it after its next check-in, from its own cron job.' ?> Needs your password.</p>
     <div class="tool-fields">
         <?= csrf_field() ?><input type="hidden" name="action" value="request_update"><input type="hidden" name="id" value="<?= (int)$selId ?>">
         <label>Your password <input type="password" name="my_password" required maxlength="1024" autocomplete="current-password"></label>
-        <label>6-digit code <input type="text" name="my_code" required inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code"></label>
     </div>
     <button type="submit">Update from Remote</button>
 </form>
