@@ -59,6 +59,20 @@ function maint_announce_from(int $startsAt, string $lead, int $now): int
     return min($at, $startsAt);
 }
 
+/**
+ * "Offline now" (owner 2026-11-24): a window from $now for $amount minutes or hours, as [starts_at, ends_at], or null
+ * when the amount is not a whole number from 1 or the unit is unknown. The 72-hour cap is left to maint_validate. Pure.
+ */
+function maint_now_window(string $amount, string $unit, int $now): ?array
+{
+    $amount = trim($amount);
+    $per = ['minutes' => 60, 'hours' => 3600][$unit] ?? 0;
+    if ($per === 0 || !preg_match('/^[1-9]\d{0,4}$/D', $amount)) {
+        return null;
+    }
+    return [$now, $now + (int)$amount * $per];
+}
+
 /** "Y-m-d\TH:i" (an <input type=datetime-local>) in $tz to unix seconds, or null. Pure. */
 function maint_parse_local(string $v, string $tz): ?int
 {

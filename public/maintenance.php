@@ -33,7 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
     $now = time();
-    if ($action === 'schedule') {
+    if ($action === 'schedule' || $action === 'now') {
         $ids = [];
         if ($s('all') === '1') {
             $ids = array_map('intval', $pdo->query('SELECT id FROM cp_tenants ORDER BY id')->fetchAll(PDO::FETCH_COLUMN));
@@ -44,15 +44,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
-        $starts = maint_parse_local($s('starts'), $tz);
-        $ends = maint_parse_local($s('ends'), $tz);
+        if ($action === 'now') {
+            // Offline now for N minutes/hours (owner 2026-11-24): starts this second, notice from now.
+            $win = maint_now_window($s('amount'), $s('unit'), $now);
+            $starts = $win[0] ?? null;
+            $ends = $win[1] ?? null;
+            $lead = 'now';
+        } else {
+            $starts = maint_parse_local($s('starts'), $tz);
+            $ends = maint_parse_local($s('ends'), $tz);
+            $lead = $s('lead');
+        }
         [$err, $clean] = maint_validate([
             'scope' => $s('scope'),
             'starts_at' => $starts ?? 0,
             'ends_at' => $ends ?? 0,
-            'announce_from' => $starts !== null ? maint_announce_from($starts, $s('lead'), $now) : 0,
+            'announce_from' => $starts !== null ? maint_announce_from($starts, $lead, $now) : 0,
             'message' => $s('message'),
         ], $now);
+        if ($action === 'now' && $starts === null) {
+            $err = ['Enter how long it stays offline: a whole number of minutes or hours.'];
+        }
         if ($starts !== null && $starts < $now && !$err) {
             $clean['starts_at'] = $now; // a start a few minutes ago means now
             $clean['announce_from'] = min($clean['announce_from'], $now);
@@ -67,12 +79,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         if ($err) {
-            $_SESSION['maint_form'] = array_intersect_key($_POST, array_flip(['scope', 'starts', 'ends', 'lead', 'message', 'all', 'tenants']));
+            $_SESSION['maint_form'] = array_intersect_key($_POST, array_flip(['action', 'scope', 'starts', 'ends', 'lead', 'message', 'all', 'tenants', 'amount', 'unit']));
             flash_set('error', implode(' ', $err));
             header('Location: ' . $back);
             exit;
         }
-        flash_set('info', 'Scheduled for ' . count($newIds) . ' business' . (count($newIds) === 1 ? '' : 'es')
+        flash_set('info', $action === 'now'
+            ? 'Offline now for ' . count($newIds) . ' business' . (count($newIds) === 1 ? '' : 'es') . ', until '
+                . date('Y-m-d H:i', $clean['ends_at']) . '. Each one is told now and goes offline within seconds (or at its next check-in if it cannot be reached); it comes back on by itself at the end.'
+            : 'Scheduled for ' . count($newIds) . ' business' . (count($newIds) === 1 ? '' : 'es')
             . '. Each one is told now (or at its next check-in, within the hour) and shows the notice to its staff from the time chosen.');
         maint_back_and_nudge($pdo, $back, $ids);
     }
@@ -175,12 +190,49 @@ if (!$ready): ?>
     <p class="muted">Taking the <strong>staff system</strong> offline stops every staff screen: admin pages, front desk, POS, kitchen and bar screens. Nobody can sign in to work, administrators included. Sales a till saved while offline wait on that till and are sent when the window ends. The guest website keeps taking visitors unless you take it offline too. Times are in the panel's time zone (<?= e($tz) ?>).</p>
 </div>
 
+<?php
+// The form that was sent back with an error keeps its choices; the other one starts empty.
+$wasNow = $fv('action') === 'now';
+$pickedNow = $wasNow ? $picked : [];
+$picked = $wasNow ? [] : $picked;
+$fvNow = static fn(string $k, string $d = ''): string => $wasNow ? $fv($k, $d) : $d;
+$fvSched = static fn(string $k, string $d = ''): string => $wasNow ? $d : $fv($k, $d);
+?>
+<h2>Offline now</h2>
+<form method="post" action="maintenance.php" class="card" autocomplete="off">
+    <?= csrf_field() ?>
+    <input type="hidden" name="action" value="now">
+    <p class="muted">Starts straight away and comes back on by itself after the time you enter (at most 72 hours). Staff see the notice from now. <strong>End now</strong> in the list below brings it back early.</p>
+    <fieldset><legend>Which businesses<?= $help('One window is saved for each business ticked. If one of them already has a window at that time, nothing is saved.') ?></legend>
+        <label class="check"><input type="checkbox" name="all" value="1"<?= $fvNow('all') === '1' ? ' checked' : '' ?>> All businesses (<?= count($tenants) ?>)</label>
+        <?php foreach ($tenants as $t): ?>
+            <label class="check"><input type="checkbox" name="tenants[]" value="<?= (int)$t['id'] ?>"<?= in_array((string)$t['id'], $pickedNow, true) ? ' checked' : '' ?>> <?= e($t['name']) ?></label>
+        <?php endforeach; ?>
+    </fieldset>
+    <label>What goes offline
+        <select name="scope" required>
+            <?php foreach (maint_scopes() as $k => $w): ?>
+                <option value="<?= e($k) ?>"<?= $fvNow('scope', 'admin') === $k ? ' selected' : '' ?>><?= e($w) ?></option>
+            <?php endforeach; ?>
+        </select></label>
+    <label>For <input type="number" name="amount" min="1" max="4320" step="1" required inputmode="numeric" value="<?= e($fvNow('amount', '30')) ?>"></label>
+    <label>Unit
+        <select name="unit">
+            <?php foreach (['minutes' => 'Minutes', 'hours' => 'Hours'] as $k => $w): ?>
+                <option value="<?= e($k) ?>"<?= $fvNow('unit', 'minutes') === $k ? ' selected' : '' ?>><?= e($w) ?></option>
+            <?php endforeach; ?>
+        </select></label>
+    <label>Message <small class="muted">(leave empty to use the generic message below; plain text, up to <?= (int)MAINT_MESSAGE_MAX ?> characters)</small>
+        <textarea name="message" rows="3" maxlength="<?= (int)MAINT_MESSAGE_MAX ?>" placeholder="<?= e($defaultMsg) ?>"><?= e($fvNow('message')) ?></textarea></label>
+    <button type="submit">Go offline now</button>
+</form>
+
 <h2>Schedule a window</h2>
 <form method="post" action="maintenance.php" class="card" autocomplete="off">
     <?= csrf_field() ?>
     <input type="hidden" name="action" value="schedule">
     <fieldset><legend>Which businesses<?= $help('One window is saved for each business ticked. If one of them already has a window at that time, nothing is saved.') ?></legend>
-        <label class="check"><input type="checkbox" name="all" value="1"<?= $fv('all') === '1' ? ' checked' : '' ?>> All businesses (<?= count($tenants) ?>)</label>
+        <label class="check"><input type="checkbox" name="all" value="1"<?= $fvSched('all') === '1' ? ' checked' : '' ?>> All businesses (<?= count($tenants) ?>)</label>
         <?php foreach ($tenants as $t): ?>
             <label class="check"><input type="checkbox" name="tenants[]" value="<?= (int)$t['id'] ?>"<?= in_array((string)$t['id'], $picked, true) ? ' checked' : '' ?>> <?= e($t['name']) ?></label>
         <?php endforeach; ?>
@@ -188,19 +240,19 @@ if (!$ready): ?>
     <label>What goes offline
         <select name="scope" required>
             <?php foreach (maint_scopes() as $k => $w): ?>
-                <option value="<?= e($k) ?>"<?= $fv('scope', 'admin') === $k ? ' selected' : '' ?>><?= e($w) ?></option>
+                <option value="<?= e($k) ?>"<?= $fvSched('scope', 'admin') === $k ? ' selected' : '' ?>><?= e($w) ?></option>
             <?php endforeach; ?>
         </select></label>
-    <label>Starts <input type="datetime-local" name="starts" required value="<?= e($fv('starts')) ?>"></label>
-    <label>Ends <small class="muted">(at most 72 hours after the start)</small> <input type="datetime-local" name="ends" required value="<?= e($fv('ends')) ?>"></label>
+    <label>Starts <input type="datetime-local" name="starts" required value="<?= e($fvSched('starts')) ?>"></label>
+    <label>Ends <small class="muted">(at most 72 hours after the start)</small> <input type="datetime-local" name="ends" required value="<?= e($fvSched('ends')) ?>"></label>
     <label>Show the notice to staff
         <select name="lead">
             <?php foreach (maint_leads() as $k => $l): ?>
-                <option value="<?= e($k) ?>"<?= $fv('lead', '1d') === $k ? ' selected' : '' ?>><?= e($l[0]) ?></option>
+                <option value="<?= e($k) ?>"<?= $fvSched('lead', '1d') === $k ? ' selected' : '' ?>><?= e($l[0]) ?></option>
             <?php endforeach; ?>
         </select></label>
     <label>Message <small class="muted">(leave empty to use the generic message below; plain text, up to <?= (int)MAINT_MESSAGE_MAX ?> characters)</small>
-        <textarea name="message" rows="3" maxlength="<?= (int)MAINT_MESSAGE_MAX ?>" placeholder="<?= e($defaultMsg) ?>"><?= e($fv('message')) ?></textarea></label>
+        <textarea name="message" rows="3" maxlength="<?= (int)MAINT_MESSAGE_MAX ?>" placeholder="<?= e($defaultMsg) ?>"><?= e($fvSched('message')) ?></textarea></label>
     <button type="submit">Schedule</button>
 </form>
 

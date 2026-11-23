@@ -46,6 +46,22 @@ t_eq('notice 1 day before', $st - 86400, maint_announce_from($st, '1d', $now));
 t_eq('notice "as soon as saved" is now', $now, maint_announce_from($st, 'now', $now));
 t_eq('unknown lead falls back to 1 day', $st - 86400, maint_announce_from($st, 'zz', $now));
 t_eq('notice never after the start', $now - 60, maint_announce_from($now - 60, 'now', $now));
+// Offline now for N minutes/hours (owner 2026-11-24)
+t_eq('now: 30 minutes', [$now, $now + 1800], maint_now_window('30', 'minutes', $now));
+t_eq('now: 2 hours', [$now, $now + 7200], maint_now_window('2', 'hours', $now));
+t_eq('now: spaces trimmed', [$now, $now + 300], maint_now_window(' 5 ', 'minutes', $now));
+t_eq('now: zero refused', null, maint_now_window('0', 'minutes', $now));
+t_eq('now: negative refused', null, maint_now_window('-5', 'minutes', $now));
+t_eq('now: decimal refused', null, maint_now_window('1.5', 'hours', $now));
+t_eq('now: empty refused', null, maint_now_window('', 'hours', $now));
+t_eq('now: unknown unit refused', null, maint_now_window('5', 'days', $now));
+t_eq('now: leading zero refused', null, maint_now_window('05', 'minutes', $now));
+$w = maint_now_window('72', 'hours', $now);
+t_eq('now: 72 hours passes validation', [], maint_validate($ok(['starts_at' => $w[0], 'ends_at' => $w[1], 'announce_from' => maint_announce_from($w[0], 'now', $now)]), $now)[0]);
+$w = maint_now_window('73', 'hours', $now);
+t_ok('now: 73 hours refused by the 72-hour cap', maint_validate($ok(['starts_at' => $w[0], 'ends_at' => $w[1], 'announce_from' => $now]), $now)[0] !== []);
+$w = maint_now_window('4321', 'minutes', $now);
+t_ok('now: 4321 minutes refused by the cap', maint_validate($ok(['starts_at' => $w[0], 'ends_at' => $w[1], 'announce_from' => $now]), $now)[0] !== []);
 t_eq('30 days lead passes validation', [], maint_validate($ok(['announce_from' => maint_announce_from($st, '30d', $now)]), $now)[0]);
 t_eq('local time parsed in its zone', (new DateTimeImmutable('2026-11-25 22:00', new DateTimeZone('Africa/Blantyre')))->getTimestamp(),
     maint_parse_local('2026-11-25T22:00', 'Africa/Blantyre'));
