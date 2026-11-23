@@ -7,6 +7,7 @@
 // It also carries staff_commands (staff changes queued on the panel) and staff_list_requested_at (2026-11-10, app/hms.php).
 // One kind of staff command, ai_setup (2026-11-11, app/ai.php), sets up the hotel's Assistant; its AI key is encrypted under this
 // business's own licence key, so the stored answer never holds it readable.
+// It also carries maintenance (2026-11-23, app/maintenance.php): null or {id, scope, announce_from, starts_at, ends_at, message}.
 // Response: {"payload": base64url(JSON), "sig": base64url(DER ECDSA P-256/SHA-256 over the JSON bytes)}
 
 require_once __DIR__ . '/../../app/bootstrap.php';
@@ -159,7 +160,25 @@ try {
 } catch (Throwable $e) {
     error_log('licence staff commands: ' . $e->getMessage());
 }
-$token = signing_make_token($payload, $privateKey);
+// Maintenance window (2026-11-23, app/maintenance.php): null = none, so the business comes back online. The business echoes
+// the window it holds (maintenance_seen). On a fault the field is left out and the business keeps what it holds (it ends on
+// the business's own clock). Never blocks the licence answer.
+try {
+    $seen = isset($in['maintenance_seen']) && is_int($in['maintenance_seen']) ? $in['maintenance_seen'] : 0;
+    maint_store_seen($pdo, (int)$tenant['id'], $seen, $now);
+    $payload['maintenance'] = maint_answer_block($pdo, (int)$tenant['id'], $now);
+} catch (Throwable $e) {
+    error_log('licence maintenance: ' . $e->getMessage());
+}
+// Deployments (2026-11-23, app/deploy.php): stores the business's optional `deploy` report {seen_id, done_id, ok, msg, sha}
+// (strictly cleaned; shown only) and answers deploy_requested {id, at} | null for its live copy. Left out when it has none
+// or on a fault. Never blocks the licence answer.
+try {
+    $payload += deploy_answer_fields($pdo, $tenant, $in['deploy'] ?? null, $now);
+} catch (Throwable $e) {
+    error_log('licence deploy: ' . $e->getMessage());
+}
+$token =signing_make_token($payload, $privateKey);
 if ($token === null) {
     error_log('licence: signing failed');
     licence_reply(503, ['error' => 'unavailable']);

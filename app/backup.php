@@ -246,6 +246,26 @@ function backup_seal_stream(callable $produce, string $key): ?string
 }
 
 /**
+ * Pure: which of the panel's backups (newest first, as backup_panel_list gives them) to delete. Keeps the newest
+ * backup of each of the newest BACKUP_KEEP days, so several runs in one day never push older days out
+ * (backup review 2026-11-23). @return string[] file names
+ */
+function backup_panel_prune_list(array $list): array
+{
+    $days = [];
+    $gone = [];
+    foreach ($list as $b) {
+        $day = substr((string)$b['name'], 6, 8); // panel-YYYYMMDD-HHMMSS.cpbk
+        if (isset($days[$day]) || count($days) >= BACKUP_KEEP) {
+            $gone[] = (string)$b['name'];
+        } else {
+            $days[$day] = true;
+        }
+    }
+    return $gone;
+}
+
+/**
  * Backs up the panel's own records (every cp_ table) to an encrypted file. Never stores them unencrypted: with no
  * signing key it refuses. Keeps the newest BACKUP_KEEP. @return array{ok:bool,name:string,size:int,error:string}
  */
@@ -273,8 +293,8 @@ function backup_panel_run(PDO $pdo): array
             @unlink($dir . '/' . $name . '.tmp');
             return ['ok' => false, 'name' => '', 'size' => 0, 'error' => 'The backup could not be written (disk full or no permission on storage/backups).'];
         }
-        foreach (array_slice(backup_panel_list(), BACKUP_KEEP) as $gone) {
-            @unlink($dir . '/' . $gone['name']);
+        foreach (backup_panel_prune_list(backup_panel_list()) as $gone) {
+            @unlink($dir . '/' . $gone);
         }
         return ['ok' => true, 'name' => $name, 'size' => strlen($blob), 'error' => ''];
     } catch (Throwable $e) {

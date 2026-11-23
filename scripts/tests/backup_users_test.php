@@ -31,6 +31,23 @@ $bad[strlen($bad) - 1] = chr(ord($bad[strlen($bad) - 1]) ^ 1);
 t_eq('a changed file is refused', null, backup_decrypt($bad, $kBackup));
 t_eq('a file without the header is refused', null, backup_decrypt('XXXXX' . substr((string)$blob, 5), $kBackup));
 t_eq('a short file is refused', null, backup_decrypt(BACKUP_MAGIC . 'abc', $kBackup));
+
+// Retention: the newest backup of each of the newest 14 days (backup review 2026-11-23)
+$mk = static fn(array $names): array => array_map(static fn($n) => ['name' => $n, 'size' => 1, 'at' => 0], $names);
+$sameDay = [];
+for ($i = 20; $i >= 1; $i--) {
+    $sameDay[] = sprintf('panel-20261123-10%02d00.cpbk', $i); // 20 runs today, newest first
+}
+$older = [];
+for ($d = 22; $d >= 1; $d--) {
+    $older[] = sprintf('panel-202611%02d-020000.cpbk', $d);
+}
+$gone = backup_panel_prune_list($mk(array_merge($sameDay, $older)));
+t_ok('many runs in one day keep only that day\'s newest', !in_array($sameDay[0], $gone, true) && count(array_intersect($sameDay, $gone)) === 19);
+t_ok('older days survive a busy day', !in_array('panel-20261122-020000.cpbk', $gone, true) && !in_array('panel-20261110-020000.cpbk', $gone, true));
+t_ok('the 15th newest day goes', in_array('panel-20261109-020000.cpbk', $gone, true) && in_array('panel-20261101-020000.cpbk', $gone, true));
+t_eq('14 files kept in all', 14, count(array_merge($sameDay, $older)) - count($gone));
+t_eq('nothing goes with fewer than 14 days', [], backup_panel_prune_list($mk(['panel-20261123-100000.cpbk', 'panel-20261122-100000.cpbk'])));
 t_eq('no backup name outside the pattern opens (no path tricks)', null, backup_panel_open('../.env'));
 
 // ── Streamed (chunked) compression: same file format as before, so older backups and new ones open the same way ──

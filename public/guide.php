@@ -320,6 +320,17 @@ view_head('Guide');
 <p><strong>The hotel's administrators can still change it</strong> in their own Assistant Settings (another key, other models, switch it off). Nothing here changes it back unless you send a set-up again. <strong>At the hotel now</strong> shows what the hotel really uses, this month's usage, and a list of anything that differs from what you sent.</p>
 <p class="muted">The key is stored sealed on the panel (only its last 4 characters show) and is wiped from the sent set-up as soon as the hotel has answered. It is never shown, emailed or written to the audit log. What the hotel sends back: whether the Assistant is on, the provider, the key's last 4 characters, the models, the monthly aim and this month's questions, tokens and estimated cost. Never the key, and nothing about guests, bookings or money.</p>
 
+<h2 id="maintenance">16c. Maintenance windows</h2>
+<p>Take a business's system offline for planned work (updates, a server move) with a notice to its staff ahead of time. <strong>Maintenance</strong> in the menu:</p>
+<ol>
+    <li>Tick the businesses (or <strong>All businesses</strong>), choose what goes offline: the <strong>staff system</strong>, the <strong>guest website</strong>, or <strong>both</strong>.</li>
+    <li>Enter the start and end (at most 72 hours; times are the panel's time zone) and when staff should start seeing the notice (as soon as it is saved, up to 30 days before).</li>
+    <li>Leave the message empty to use the <strong>generic message</strong> (edit it at the bottom of the page; <strong>Revert to the generic message</strong> puts the built-in text back), or write one for this window. Press <strong>Schedule</strong>.</li>
+</ol>
+<p>What the business sees: from the notice time, every staff page shows "Scheduled maintenance: date, from&ndash;to" and the message. During the window the staff system answers "Scheduled maintenance, back online at &hellip;" to everyone, administrators included, and that also stops the front desk, POS, kitchen and bar screens (a till keeps sales it saved offline and sends them after). The guest website shows its maintenance page with the message and the time it is back. At the end it comes back on <strong>by itself</strong>, on its own clock, even if it cannot reach this panel.</p>
+<p><strong>End now</strong> (a running window) or <strong>Cancel</strong> (one not started yet) brings it back early: the panel asks the business to check in straight away, so it usually lands within a minute (while its staff system is offline it also checks in every 5 minutes whenever someone opens a page). <strong>Sent</strong> shows when the window went out in its licence answer; <strong>Seen by the hotel</strong> when the business confirmed it holds it (at its check-in after that, so up to an hour later). Windows for one business may not overlap; a business is told about its next window once the one before is over.</p>
+<p class="muted">A business keeps its own "maintenance mode" switch for its website; the panel never changes it. The panel's own check-ins and nudges are never blocked, so End now always lands. Every schedule, end, cancel and message change is in the audit log.</p>
+
 <h2 id="data-protection">17. Data protection</h2>
 <p>What the panel does to keep your clients' data safe:</p>
 <ul>
@@ -335,5 +346,21 @@ view_head('Guide');
     <li>A short written <strong>retention policy</strong> (how long backups and records are kept) and a <strong>breach plan</strong> (who you tell, and how fast, if data is lost or exposed).</li>
     <li>Make sure each business keeps an <strong>off-site copy</strong> (Backups page, last column), stored encrypted, and that only named people can open it.</li>
 </ul>
+
+<h2 id="deployments">18. Deployments (Update from Remote)</h2>
+<p>The <strong>Deployments</strong> page lists every commit pushed to GitHub for each live copy (this panel, and each business's site), with its message, who wrote it and when, marks the one that is <strong>Live</strong>, and says how many commits the live copy is behind. <strong>Update from Remote</strong> does the same as the button in cPanel &gt; Git Version Control: the server pulls the branch from GitHub. The panel only pulls. It never pushes code to GitHub.</p>
+<p><strong>No cPanel password or token is kept here.</strong> The button (your password and a new 6-digit code; written to the audit log) only records the request. A cron job on that server picks it up, runs the pull and reports back: <em>Requested</em>, then <em>Picked up</em>, then <em>Done</em> or <em>Failed</em> with the server's own message. A request not picked up in 30 minutes shows "is the cron job set up?"; one not picked up in 24 hours lapses and is never run late. A pull fails when files were changed on the server itself (cPanel only moves forward cleanly).</p>
+<p><strong>1. A read-only GitHub token</strong> (once, for all repositories), so the page can list the commits:</p>
+<ol>
+    <li>GitHub &gt; your picture &gt; Settings &gt; Developer settings &gt; Personal access tokens &gt; <strong>Fine-grained tokens</strong> &gt; Generate new token.</li>
+    <li>Name it "Licence panel - read commits", choose an expiry date, Resource owner = the account that owns the repositories.</li>
+    <li>Repository access: <strong>Only select repositories</strong>: msp-control-panel, Liwonde_Sun_Hotel_2026, Rosalyns-hotel-2026.</li>
+    <li>Repository permissions: <strong>Contents: Read-only</strong> (Metadata: Read-only is added by itself). Nothing else.</li>
+    <li>Generate, copy it, and paste it under <strong>GitHub access</strong> on the Deployments page. It is stored locked with the signing key; only its last 4 characters show. When it expires, make a new one the same way.</li>
+</ol>
+<p><strong>2. Add each live copy</strong> on the Deployments page: a name, this panel or the business, the GitHub repository (owner/name) and the branch cPanel has checked out (usually main).</p>
+<p><strong>3. The cron job for this panel</strong>: cPanel &gt; Cron Jobs &gt; every 5 minutes (*/5), one line. Replace USER with the cPanel account name and the folder with this panel's repository path (cPanel &gt; Git Version Control shows it):</p>
+<pre>cd /home/USER/msp-control-panel &amp;&amp; php scripts/deploy-check.php --want &amp;&amp; /usr/local/cpanel/bin/uapi --output=jsonpretty VersionControl update repository_root=/home/USER/msp-control-panel branch=main &gt; storage/deploy-last.json 2&gt;&amp;1; php scripts/deploy-check.php --report storage/deploy-last.json</pre>
+<p class="muted">The first part says whether a request is waiting; only then does cPanel's own command pull (it pulls only because the branch is named; always name the branch already checked out). The last part always runs: it records the result and the live commit. The businesses' sites get their own cron line when their side is added (they hear about a request in their signed licence answer and report back at their next check-in); until then their requests stay <em>Requested</em> and lapse.</p>
 <?php
 view_foot();

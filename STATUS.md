@@ -46,6 +46,43 @@ Everything up to commit `5022fe1` is live:
 - HMS staff and permissions from the panel, and modules enforced in the hotels (commit `df258c0` plus the follow-up).
 - The database has migrations up to **010** applied (009: the HMS staff tables; 010: the HMS staff-step error).
 
+## In progress 2026-11-23 (ClaudeWorkTwo): maintenance windows, Deployments page, backup review
+**Owner asked (2026-11-23):** (1) put the HMS offline for maintenance (admin, guest site or both) on a scheduled window,
+with a banner announcing it ahead of time, a default generic message to revert to, and back online automatically after
+the window; (2) double-check the backup logic; (3) see every push to git (commit messages) in the panel and run cPanel
+"Update from Remote" from the panel.
+- **Maintenance:** migration 014 `cp_maintenance` (NOT applied yet), `app/maintenance.php`, `public/maintenance.php`,
+  signed `maintenance` block in `public/api/licence.php`; hotels: `includes/licence-maintenance.php` (new), edits in
+  `includes/licence.php`, `includes/licence-guard.php`, `config/database.php`. The hotel ends the window from its own
+  clock (no check-in needed) and fails open on bad data. Ship order: Liwonde, port to Rosalyn's, then panel.
+- **Deployments:** migration 015 `cp_deploy_targets` (NOT applied yet), `app/deploy.php`, `public/deploy.php`. GitHub
+  commits (read-only token, sealed with `keys_derive('cp-deploy-v1')`). **Owner 2026-11-23: no cPanel API tokens, no
+  cPanel credentials stored; use cron.** Update from Remote (2-step code) only records a request; a 5-minute cron on
+  each cPanel account runs `scripts/deploy-check.php --want && uapi VersionControl update ...` and reports the result
+  and live commit. Hotels get the request in the signed licence answer (hotel side: `.claude/DEPLOY_HOTEL_SPEC.md`,
+  built after the maintenance work). The panel never pushes code.
+- **Backup review (done 2026-11-23):** fixed (not yet committed):
+  - (1, high) Liwonde's own backups held the panel's 19 `cp_` tables (shared DB): a Liwonde restore would roll the
+    panel back, and a downloaded backup gave hotel admins the panel's password hashes. Hotel `includes/db-backup.php`
+    now skips `cp_*` (PHP dumper + mysqldump `--ignore-table`), and restore skips `cp_` statements in older backups.
+    Test `scripts/tests/db_backup_panel_tables.php` (33 pure); a real Liwonde backup checked: 171 tables, 0 `cp_`.
+  - (3) Panel keeps the newest backup of each of the newest 14 days (was the newest 14 files, so a busy day pushed
+    older days out): `backup_panel_prune_list()` in `app/backup.php`; `backup_users_test.php` 69/0.
+  - LATER (owner's call): the panel's backups and signing key never leave its server (no off-site copy or reminder);
+    hotel backups cover the database only, not uploaded images; no restore round-trip test on either side; the panel
+    never flags an old off-site download.
+- **State (2026-11-23):** both features reviewed by Opus (blockers fixed). Hotels PUSHED: Liwonde `46efbca`, Rosalyn's
+  `974003a` (inert until the panel sends a window). Panel committed locally, **NOT pushed**: applying migrations
+  014 + 015 to the live DB was refused by this session's permission check, so it waits on the owner. Export taken
+  first: `database/cp-export-20261123-022317.sql`.
+- **Next (exact):** owner runs or OKs `php scripts/migrate.php` (014 + 015, additive), then `php scripts/tests/maintenance_test.php --db`,
+  `deploy_test.php --db`, `hms_test.php --db`, update `database/README.txt`, then `git push origin main`. Pushing
+  before 015 makes the Deployments page return 500. Then: build the hotel side of Deployments from
+  `.claude/DEPLOY_HOTEL_SPEC.md` (Liwonde first, port), and the owner sets up the 5-minute cron (Guide section 18).
+- LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
+  min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only
+  by the nudge (else up to ~1 h); admins cannot open the Licence page during an admin window.
+
 ## In progress: HMS staff and modules from the panel (owner 2026-11-10)
 **What the owner asked for:**
 - Manage which modules each HMS may use.

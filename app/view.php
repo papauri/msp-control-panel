@@ -23,7 +23,7 @@ function view_head(string $title, bool $nav = true): void
         }
         echo '<header class="top"><strong class="brand">Licence panel</strong><nav>'
             . '<a href="index.php">Businesses</a><a href="tenant.php">Add business</a><a href="invoices.php">Billing</a><a href="clients.php">Clients</a><a href="reports.php">Reports</a>'
-            . '<a href="outbox.php">Outbox' . ($waiting > 0 ? ' (' . $waiting . ')' : '') . '</a><a href="automations.php">Automations</a><a href="audit.php">Audit log</a><a href="backups.php">Backups</a><a href="users.php">Users</a><a href="settings.php">Settings</a><a href="keys.php">Signing key</a><a href="account.php">My account</a><a href="guide.php">Guide</a><a href="guide-sales.php">Sales guide</a></nav>'
+            . '<a href="outbox.php">Outbox' . ($waiting > 0 ? ' (' . $waiting . ')' : '') . '</a><a href="automations.php">Automations</a><a href="audit.php">Audit log</a><a href="backups.php">Backups</a><a href="maintenance.php">Maintenance</a><a href="deploy.php">Deployments</a><a href="users.php">Users</a><a href="settings.php">Settings</a><a href="keys.php">Signing key</a><a href="account.php">My account</a><a href="guide.php">Guide</a><a href="guide-sales.php">Sales guide</a></nav>'
             . '<form method="post" action="logout.php" class="inline">' . csrf_field()
             . '<button type="submit" class="link">Sign out</button></form></header>';
     }
