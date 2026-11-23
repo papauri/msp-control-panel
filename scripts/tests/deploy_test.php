@@ -253,6 +253,14 @@ t_ok('git: exit= not the last line = not finished', !$res['ok'] && strpos($res['
 t_ok('git: a malformed exit line is not a result', !deploy_uapi_result("exit=0x\n", 'main')['ok']);
 t_ok('git: long failure cut to 500', mb_strlen(deploy_uapi_result(str_repeat("error: x\n", 200) . "exit=1\n", 'main')['msg']) <= 500);
 t_ok('result: empty file names no uapi', strpos(deploy_uapi_result('', 'main')['msg'], 'uapi') === false);
+// A pull outlasting one cron run (owner 2026-11-24: cron may run every minute): no end yet = still running.
+t_ok('complete: git exit=0', deploy_result_complete("Updating a..b\nFast-forward\n 3 files changed\nexit=0\n"));
+t_ok('complete: git exit=128', deploy_result_complete("fatal: Not possible to fast-forward, aborting.\nexit=128"));
+t_ok('complete: git still running', !deploy_result_complete("From https://github.com/x/y\n * branch main -> FETCH_HEAD\n"));
+t_ok('complete: exit= not last', !deploy_result_complete("exit=0 left over"));
+t_ok('complete: uapi JSON', deploy_result_complete("{\n \"result\": {\"status\": 1}\n}\n"));
+t_ok('complete: half uapi JSON', !deploy_result_complete("{\n \"result\": {\"status\": 1"));
+t_ok('complete: blank', !deploy_result_complete(" \n"));
 
 // --- the live commit from .git (files only)
 $g = sys_get_temp_dir() . '/cp-deploy-git-' . bin2hex(random_bytes(4));

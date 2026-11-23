@@ -401,6 +401,13 @@ function deploy_uapi_result(string $body, string $branch): array
     return ['ok' => false, 'msg' => deploy_scrub('cPanel said no: ' . $why . ' (it only pulls when the live copy can fast-forward: local changes on the server stop it).', [], DEPLOY_MSG_MAX)];
 }
 
+/** True when a result file's end is there: a last line `exit=N` (git) or a closing `}` (uapi JSON). A pull still running has neither. */
+function deploy_result_complete(string $body): bool
+{
+    $tail = rtrim(substr($body, -512));
+    return $tail !== '' && (preg_match('/(?:^|\n)exit=\d+$/', $tail) === 1 || substr($tail, -1) === '}');
+}
+
 /**
  * `git pull --ff-only` output lines (the "exit=N" line taken off) as {ok, msg}. Exit 0 = done: "Already up to date." or
  * the "Updating a..b" line with "Fast-forward" and the "N files changed" line (found anywhere: 2>&1 mixes stdout and

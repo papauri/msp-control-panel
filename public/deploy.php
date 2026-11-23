@@ -61,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // panel user + CSRF token (checked above); written to the audit log by deploy_request_update().
         $reqId = deploy_request_update($pdo, (int)$t['id'], $me, time());
         flash_set('ok', (string)$t['name'] . ': Update from Remote asked for (request ' . $reqId . '). '
-            . ($t['tenant_id'] === null ? 'The cron job runs it within 5 minutes.' : 'The site was told now; its cron job runs it within 5 minutes.'));
+            . ($t['tenant_id'] === null ? 'The cron job runs it at its next run (every 1 to 5 minutes).' : 'The site was told now; its cron job runs it at its next run (every 1 to 5 minutes).'));
         header('Location: deploy.php?id=' . (int)$t['id']);
         // A business hears of the request now, not at its next hourly check-in (owner 2026-11-23): nudge it after the
         // redirect is sent, so nobody waits. Best effort; the request still goes with its next check-in either way.
@@ -208,7 +208,7 @@ view_flash();
 <div class="tools stack">
 <form method="post" action="deploy.php" class="tool tool-warn" autocomplete="off">
     <h3>Update from Remote</h3>
-    <p class="muted">Asks the server to pull <strong><?= e($t['branch']) ?></strong> from GitHub (the same as the button in cPanel &gt; Git Version Control). This changes the live site. <?= $t['tenant_id'] === null ? 'The cron job runs it within 5 minutes.' : 'The site is told straight away; its own cron job runs it within 5 minutes.' ?> Written to the audit log.</p>
+    <p class="muted">Asks the server to pull <strong><?= e($t['branch']) ?></strong> from GitHub (the same as the button in cPanel &gt; Git Version Control). This changes the live site. <?= $t['tenant_id'] === null ? 'The cron job runs it at its next run (every 1 to 5 minutes).' : 'The site is told straight away; its own cron job runs it at its next run (every 1 to 5 minutes).' ?> Written to the audit log.</p>
     <?= csrf_field() ?><input type="hidden" name="action" value="request_update"><input type="hidden" name="id" value="<?= (int)$selId ?>">
     <button type="submit">Update from Remote</button>
 </form>

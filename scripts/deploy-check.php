@@ -54,8 +54,13 @@ try {
         $consume = false;
         if ($picked > (int)$t['done_id']) {
             clearstatcache();
-            if ($file !== '' && is_file($file) && @filemtime($file) >= $pickedAt) {
-                $res = deploy_uapi_result((string)@file_get_contents($file, false, null, 0, 1048576), (string)$t['branch']);
+            $late = $now - $pickedAt > DEPLOY_CHECK_NO_RESULT_SECONDS;
+            $body = ($file !== '' && is_file($file) && @filemtime($file) >= $pickedAt) ? (string)@file_get_contents($file, false, null, 0, 1048576) : null;
+            if ($body !== null && !$late && !deploy_result_complete($body)) {
+                // A pull still running (no `exit=N` / closing brace yet) when the next cron run comes: wait for it
+                // (owner 2026-11-24: the cron may run every minute). After the no-result time whatever is there is read.
+            } elseif ($body !== null) {
+                $res = deploy_uapi_result($body, (string)$t['branch']);
                 $report = ['seen_id' => $picked, 'done_id' => $picked, 'ok' => $res['ok'], 'msg' => $res['msg']] + $report;
                 $consume = true;
             } elseif ($now - $pickedAt > DEPLOY_CHECK_NO_RESULT_SECONDS) {
