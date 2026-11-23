@@ -89,7 +89,14 @@ the window; (2) double-check the backup logic; (3) see every push to git (commit
   GitHub token saved; both live copies added and report their commit (up to date). First Liwonde request 11:49
   waiting on its run. Panel cron not added yet. Owner 2026-11-23: Update from Remote is one click, no password or code
   (signed-in + CSRF + audit log; it can only pull what is on GitHub), and nudges the hotel to check in straight
-  away (`tenant_nudge`; the hotel ignores a nudge within 60 s of its last check, then the request waits for the next one). LATER: guide section 18 / spec / deploy-check
+  away (`tenant_nudge`; the hotel ignores a nudge within 60 s of its last check, then the request waits for the next one).
+  (6) 2026-11-24: first real Liwonde run proved the chain (nudge, pick-up, report) but uapi fails from cron on this host
+  (CageFS: `Failed to execute /usr/local/cpanel/cpanel`). Switched to `/usr/bin/git pull --ff-only origin main` (proven
+  from cron: git 2.43.7, public https remotes, fetch exit 0; sites run from the repo, no .cpanel.yml). Parser reads git
+  output ending `exit=N` (old uapi JSON still read); scrub hides `scheme://cred@`. Reviewed PASS. Owner must edit the cron
+  lines (guide section 18). Both live trees show ` M includes/visitor-tracker.php` (likely file mode/line endings; pending
+  commits do not touch it; never reset it). LATER: a pull over 5 min lets the next `--report` read a partial file
+  (flock); hotel "did not answer" path cuts before scrubbing; backup cron lines in guide/README use plain `php`. LATER: guide section 18 / spec / deploy-check
   comments still show plain `php`.
 - LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
   min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only

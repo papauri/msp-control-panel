@@ -39,6 +39,11 @@ t_ok('scrub removes any token shape', strpos(deploy_scrub('x ghp_ABCDEFGHIJ12345
 t_eq('scrub flattens control characters', 'a b c', deploy_scrub("a\x00\x07b\r\n\tc"));
 t_eq('scrub limits the length', 500, mb_strlen(deploy_scrub(str_repeat('é', 900), [], 500)));
 t_eq('scrub survives bad UTF-8', 'ab', str_replace('?', '', deploy_scrub("a\xC3b")));
+t_eq('scrub: user:password in an address', 'fatal: https://***@github.com/x', deploy_scrub('fatal: https://user:tok@github.com/x'));
+t_eq('scrub: a token in an address', "'https://***@github.com' x", deploy_scrub("'https://tok@github.com' x"));
+t_eq('scrub: a password holding "@" is removed whole', 'https://***@github.com/x', deploy_scrub('https://user:p@ss@github.com/x'));
+t_eq('scrub: a GitHub token in an address', 'https://***@github.com/x', deploy_scrub('https://ghp_ABCDEFGH123456@github.com/x'));
+t_eq('scrub: plain addresses and emails left alone', 'https://github.com/papauri/x mail a@b.com', deploy_scrub('https://github.com/papauri/x mail a@b.com'));
 
 // --- validation
 foreach (['papauri/msp-control-panel', 'papauri/Liwonde_Sun_Hotel_2026', 'papauri/Rosalyns-hotel-2026', 'a.b/c.d'] as $r) {
@@ -220,6 +225,34 @@ $res = deploy_uapi_result($cliNo, 'main');
 t_ok('result failed with the reason, token scrubbed', !$res['ok'] && strpos($res['msg'], 'fast-forward') !== false && strpos($res['msg'], 'WXYZ') === false);
 t_ok('result: empty file', !deploy_uapi_result('', 'main')['ok']);
 t_ok('result: at most 500', mb_strlen(deploy_uapi_result(json_encode(['result' => ['status' => 0, 'errors' => [str_repeat('e', 3000)]]]), 'main')['msg']) <= 500);
+
+// --- git pull --ff-only output ending in "exit=N" (the cron line since 2026-11-23: cPanel's uapi cannot run from cron, CageFS)
+$from = "From https://github.com/papauri/msp-control-panel\n * branch            main       -> FETCH_HEAD\n";
+t_eq('git: already up to date', ['ok' => true, 'msg' => 'git pull of main: Already up to date.'], deploy_uapi_result($from . "Already up to date.\nexit=0\n", 'main'));
+t_eq('git: fast-forward with the file summary (a "{a => b}" rename line is not read as JSON)',
+    ['ok' => true, 'msg' => 'git pull of main: Updating 1a2b3c4..5d6e7f8, Fast-forward, 2 files changed, 8 insertions(+), 6 deletions(-).'],
+    deploy_uapi_result($from . "   1a2b3c4..5d6e7f8  main -> origin/main\nUpdating 1a2b3c4..5d6e7f8\nFast-forward\n app/deploy.php | 12 +++++++-----\n src/{old => new}/x.php | 2 +-\n 2 files changed, 8 insertions(+), 6 deletions(-)\nexit=0\n", 'main'));
+t_eq('git: CRLF line ends, one file', ['ok' => true, 'msg' => 'git pull of main: Updating a1..b2, Fast-forward, 1 file changed, 1 insertion(+).'],
+    deploy_uapi_result("Updating a1..b2\r\nFast-forward\r\n 1 file changed, 1 insertion(+)\r\nexit=0\r\n", 'main'));
+t_eq('git: exit 0 with no output = done', ['ok' => true, 'msg' => 'git pull of main: finished.'], deploy_uapi_result("exit=0\n", 'main'));
+$res = deploy_uapi_result($from . "Updating 1a2b3c4..5d6e7f8\nerror: Your local changes to the following files would be overwritten by merge:\n\tapp/deploy.php\n\tpublic/a.php\n\tpublic/b.php\n\tpublic/c.php\n\tpublic/d.php\nPlease commit your changes or stash them before you merge.\nAborting\nexit=1\n", 'main');
+t_ok('git: local changes would be overwritten (exit 1), from the error line on', !$res['ok']
+    && strpos($res['msg'], 'git pull of main: failed (exit 1): error: Your local changes to the following files would be overwritten by merge: app/deploy.php') === 0
+    && strpos($res['msg'], 'Aborting') !== false && strpos($res['msg'], 'Updating') === false && strpos($res['msg'], 'exit=') === false);
+t_eq('git: diverged (exit 128), hint lines left out', ['ok' => false, 'msg' => 'git pull of main: failed (exit 128): fatal: Not possible to fast-forward, aborting.'],
+    deploy_uapi_result($from . "hint: Diverging branches can't be fast-forwarded, you need to either:\nhint:\nhint: \tgit merge --no-ff\nfatal: Not possible to fast-forward, aborting.\nexit=128\n", 'main'));
+t_eq('git: network failure (exit 128), credentials in the address scrubbed',
+    ['ok' => false, 'msg' => "git pull of main: failed (exit 128): fatal: unable to access 'https://***@github.com/papauri/x/': Could not resolve host: github.com"],
+    deploy_uapi_result("fatal: unable to access 'https://user:s3cretTok@github.com/papauri/x/': Could not resolve host: github.com\nexit=128\n", 'main'));
+t_eq('git: no error/fatal line = the last lines (exit 127)', ['ok' => false, 'msg' => 'git pull of main: failed (exit 127): /bin/sh: /usr/bin/git: No such file or directory'],
+    deploy_uapi_result("/bin/sh: /usr/bin/git: No such file or directory\nexit=127\n", 'main'));
+$res = deploy_uapi_result($from . "Updating 1a2b3c4..5d6e7f8\nFast-forward\n", 'main');
+t_ok('git: output with no exit= line = not finished, failed', !$res['ok'] && strpos($res['msg'], 'The update command did not finish (no exit code)') === 0 && strpos($res['msg'], 'Fast-forward') !== false);
+$res = deploy_uapi_result("Updating a1..b2\nexit=0\nmore after\n", 'main');
+t_ok('git: exit= not the last line = not finished', !$res['ok'] && strpos($res['msg'], 'did not finish (no exit code)') !== false);
+t_ok('git: a malformed exit line is not a result', !deploy_uapi_result("exit=0x\n", 'main')['ok']);
+t_ok('git: long failure cut to 500', mb_strlen(deploy_uapi_result(str_repeat("error: x\n", 200) . "exit=1\n", 'main')['msg']) <= 500);
+t_ok('result: empty file names no uapi', strpos(deploy_uapi_result('', 'main')['msg'], 'uapi') === false);
 
 // --- the live commit from .git (files only)
 $g = sys_get_temp_dir() . '/cp-deploy-git-' . bin2hex(random_bytes(4));

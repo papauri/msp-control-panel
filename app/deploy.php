@@ -3,13 +3,14 @@
 // to run cPanel "Update from Remote".
 //
 // No cPanel credentials (owner's choice 2026-11-23: "no credentials: cron"). The button only RECORDS a request (a new,
-// rising request id). A cron job on each server picks it up and runs the pull itself with cPanel's own command-line UAPI:
+// rising request id). A cron job on each server picks it up and runs the pull itself with git (git pull --ff-only of the
+// branch already checked out; cPanel's uapi cannot run from cron on this host: CageFS):
 //   - this panel: scripts/deploy-check.php --want / --report (the cron line is in the Guide, section 18, and README);
 //   - a business: the request travels in its SIGNED licence answer (deploy_requested), and it reports back in its next
 //     check-in (deploy: seen_id, done_id, ok, msg, sha). The hotel side is specified in .claude/DEPLOY_HOTEL_SPEC.md.
-// cPanel UAPI VersionControl::update pulls ONLY when `branch` is given (api.docs.cpanel.net, cpanel.openapi.yaml,
-// VersionControl-update), and "Update from Remote" is a fast-forward-only pull (docs.cpanel.net, Git Version Control).
-// Neither repository has a .cpanel.yml, so there is no "Deploy HEAD" step: Update from Remote is the deploy.
+// cPanel's "Update from Remote" is a fast-forward-only pull (docs.cpanel.net, Git Version Control); the cron line does the
+// same with git pull --ff-only origin BRANCH and writes git's output plus "exit=N" (read by deploy_uapi_result).
+// Neither repository has a .cpanel.yml, so there is no "Deploy HEAD" step: the pull is the deploy.
 // A forged request could only make a site pull its own branch; still, every report is checked: ids must be newer than the
 // last handled one and never above the newest request, and results are shown as reported, never trusted for anything else.
 //
@@ -79,7 +80,10 @@ function deploy_github_token_ok(string $t): bool
     return (bool)preg_match('/^[A-Za-z0-9_]{20,255}$/D', $t);
 }
 
-/** Remove the given secrets, and anything shaped like a token, from text that may be shown, stored or audited. */
+/**
+ * Remove the given secrets, credentials in addresses (scheme://user:pass@ or scheme://token@ -> scheme://***@, as git
+ * echoes remote URLs) and anything shaped like a token from text that may be shown, stored or audited.
+ */
 function deploy_scrub(string $text, array $secrets = [], int $max = 240): string
 {
     $text = mb_scrub($text, 'UTF-8');
@@ -92,6 +96,7 @@ function deploy_scrub(string $text, array $secrets = [], int $max = 240): string
             }
         }
     }
+    $text = (string)preg_replace('~\b([a-z][a-z0-9+.\-]*://)[^\s/]+@~iu', '$1***@', $text);
     $text = (string)preg_replace('/(github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]{6,}|cpanel\s+[^\s:]+:\S+|Bearer\s+\S+)/i', '[token]', $text);
     $text = (string)preg_replace('/[^\P{C}\n]+|\n+/u', ' ', $text); // control characters (and line breaks) become spaces
     return mb_substr(trim((string)preg_replace('/ {2,}/', ' ', $text)), 0, $max);
@@ -370,18 +375,67 @@ function deploy_uapi_parse(string $body): array
     return ['ok' => (int)$j['status'] === 1, 'data' => $j['data'] ?? null, 'errors' => $flat($j['errors'] ?? []), 'messages' => $flat($j['messages'] ?? [])];
 }
 
-/** The result of `uapi VersionControl update` as {ok, msg} for a report (msg scrubbed, at most 500 characters). */
+/**
+ * The result file the cron line wrote (storage/deploy-last.json) as {ok, msg} for a report (msg scrubbed, at most 500
+ * characters): the output of `git pull --ff-only origin BRANCH` ending in a line "exit=N" (the cron line since
+ * 2026-11-23, see deploy_git_result; git output without that line = the command did not finish), or the older
+ * `uapi VersionControl update` JSON, still read so a result written by the old cron line is recorded too.
+ */
 function deploy_uapi_result(string $body, string $branch): array
 {
     if (trim($body) === '') {
-        return ['ok' => false, 'msg' => 'The update command wrote nothing (is /usr/local/cpanel/bin/uapi available to the cron job?).'];
+        return ['ok' => false, 'msg' => 'The update command wrote nothing (check the cron line: Guide, section 18).'];
+    }
+    $lines = array_values(array_filter(array_map('trim', preg_split('/\R/u', mb_scrub($body, 'UTF-8')) ?: []), static fn($l) => $l !== ''));
+    if ($lines && preg_match('/^exit=(\d+)$/D', $lines[count($lines) - 1], $m)) {
+        return deploy_git_result(array_slice($lines, 0, -1), (int)$m[1], $branch); // checked first: git output may hold "{...}"
     }
     $p = deploy_uapi_parse($body);
     if ($p['ok']) {
         return ['ok' => true, 'msg' => 'cPanel accepted Update from Remote for ' . deploy_scrub($branch, [], 100) . '.'];
     }
+    if (!preg_match('/"status"/', $body) && preg_grep('/^(From |Updating |Already up|Fast-forward|error:|fatal:|hint:)/', $lines)) {
+        return ['ok' => false, 'msg' => deploy_scrub('The update command did not finish (no exit code): ' . implode(' ', array_slice($lines, -5)), [], DEPLOY_MSG_MAX)];
+    }
     $why = $p['errors'] ? implode(' ', $p['errors']) : 'no reason given';
     return ['ok' => false, 'msg' => deploy_scrub('cPanel said no: ' . $why . ' (it only pulls when the live copy can fast-forward: local changes on the server stop it).', [], DEPLOY_MSG_MAX)];
+}
+
+/**
+ * `git pull --ff-only` output lines (the "exit=N" line taken off) as {ok, msg}. Exit 0 = done: "Already up to date." or
+ * the "Updating a..b" line with "Fast-forward" and the "N files changed" line (found anywhere: 2>&1 mixes stdout and
+ * stderr). Any other exit = failed: git's own lines from the first "error:" / "fatal:" on (hint: lines left out), or the
+ * last 5 lines when there is none (e.g. the shell's "No such file" for exit 127).
+ */
+function deploy_git_result(array $lines, int $exit, string $branch): array
+{
+    $text = implode("\n", $lines);
+    $head = 'git pull of ' . deploy_scrub($branch, [], 100) . ': ';
+    if ($exit === 0) {
+        if (preg_match('/^Already up[ -]to[ -]date\b/mi', $text)) {
+            return ['ok' => true, 'msg' => $head . 'Already up to date.'];
+        }
+        $parts = [];
+        if (preg_match('/^Updating \S+/m', $text, $u)) {
+            $parts[] = $u[0];
+        }
+        if (preg_match('/^Fast-forward\b/m', $text)) {
+            $parts[] = 'Fast-forward';
+        }
+        if (preg_match('/^\d+ files? changed[^\n]*/m', $text, $c)) {
+            $parts[] = $c[0];
+        }
+        return ['ok' => true, 'msg' => deploy_scrub($head . ($parts ? implode(', ', $parts) : 'finished') . '.', [], DEPLOY_MSG_MAX)];
+    }
+    $why = array_slice($lines, -5);
+    foreach ($lines as $i => $l) {
+        if (preg_match('/^(error|fatal):/i', $l)) {
+            $why = array_slice($lines, $i);
+            break;
+        }
+    }
+    $why = array_filter($why, static fn($l) => strncasecmp($l, 'hint:', 5) !== 0);
+    return ['ok' => false, 'msg' => deploy_scrub($head . 'failed (exit ' . $exit . '): ' . ($why ? implode(' ', $why) : 'no output'), [], DEPLOY_MSG_MAX)];
 }
 
 /**

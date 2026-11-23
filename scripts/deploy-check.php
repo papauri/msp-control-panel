@@ -1,15 +1,22 @@
 <?php
 if (PHP_SAPI !== 'cli') { http_response_code(403); echo "CLI only.\n"; exit(1); } // never over the web; exit 1 so a non-CLI php in cron never lets `&&` run the update
 // The panel's own "Update from Remote" (Deployments page, app/deploy.php). No cPanel credentials: cron runs the pull with
-// cPanel's own command-line UAPI as the account itself. cPanel > Cron Jobs, every 5 minutes (one line; Guide section 18):
+// git itself as the account. cPanel > Cron Jobs, every 5 minutes (one line; Guide section 18; main = the branch checked out):
 //
-//   */5 * * * * cd /home/USER/msp-control-panel && php scripts/deploy-check.php --want && /usr/local/cpanel/bin/uapi --output=jsonpretty VersionControl update repository_root=/home/USER/msp-control-panel branch=main > storage/deploy-last.json 2>&1; php scripts/deploy-check.php --report storage/deploy-last.json
+//   */5 * * * * cd /home/USER/msp-control-panel && /usr/local/bin/php scripts/deploy-check.php --want && { GIT_TERMINAL_PROMPT=0 /usr/bin/git pull --ff-only origin main; echo "exit=$?"; } > storage/deploy-last.json 2>&1; /usr/local/bin/php scripts/deploy-check.php --report storage/deploy-last.json
+//
+// Why git and not cPanel's uapi: cron runs inside CageFS on this host, where uapi fails ("Failed to execute
+// /usr/local/cpanel/cpanel"). The panel runs straight from the repository folder (no .cpanel.yml), so a fast-forward-only
+// pull of the branch already checked out IS cPanel's Update from Remote. GIT_TERMINAL_PROMPT=0: git fails instead of
+// waiting for a password. Local changes on the server stop the pull (reported as failed).
+// Why /usr/local/bin/php: cron's plain `php` may be php-cgi (not the command line); this script then refuses (exit 1), so
+// nothing is pulled and nothing recorded. Use the command-line PHP path your host gives.
 //
 //   --want           exit 0 when this panel's own live copy has an open request (and marks it picked up), else exit 1,
-//                    so the uapi pull runs only when asked. The uapi command pulls only because `branch` is given.
+//                    so the git pull runs only when asked (always name the branch already checked out).
 //   --report FILE    always runs (after the `;`): records the commit checked out now (read from .git, no git command) and,
-//                    when a request was picked up, the result in FILE (written by the uapi command after the pick-up;
-//                    an older or missing file is ignored). The file is removed once recorded.
+//                    when a request was picked up, the result in FILE (git's output and "exit=N", written after the
+//                    pick-up; an older or missing file is ignored). The file is removed once recorded.
 // Exit codes: --want 0 = run the update, 1 = nothing to do (or a fault); --report 0 = fine, 1 = a fault.
 require_once __DIR__ . '/../app/bootstrap.php';
 
@@ -66,7 +73,7 @@ try {
         exit(0);
     }
 
-    fwrite(STDERR, "Usage: php scripts/deploy-check.php --want | --report FILE\n");
+    fwrite(STDERR, "Usage: /usr/local/bin/php scripts/deploy-check.php --want | --report FILE (cron line: top of this file, Guide section 18)\n");
     exit(1);
 } catch (Throwable $e) {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {

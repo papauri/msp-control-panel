@@ -3,7 +3,8 @@
 BUILT 2026-11-23: Liwonde 3fccfba, Rosalyn's 1bad20c (adds: no second pick-up while an earlier one is still running). The panel side is live code in
 `app/deploy.php` (`deploy_answer_fields`, `deploy_clean_report`, `deploy_report_changes`) and `public/api/licence.php`.
 No cPanel credentials anywhere (owner 2026-11-23: "no credentials: cron"). The hotel never pushes; it only pulls its own
-branch with cPanel's own command-line UAPI, run by the account's cron.
+branch with `git pull --ff-only` run by the account's cron (changed 2026-11-23 from cPanel's command-line UAPI: cron runs
+inside CageFS on this host and uapi fails there with "Failed to execute /usr/local/cpanel/cpanel").
 
 ## 1. Licence answer (panel -> hotel, inside the SIGNED payload)
 `deploy_requested`: `{"id": <int>, "at": <unix time>}` or `null`. Missing = old panel or no live copy set up: do nothing.
@@ -28,7 +29,9 @@ Add an optional `deploy` object to the check-in JSON (keep the whole body under 
   `deploy_requested.id` > `licence_deploy_seen_id` and > `licence_deploy_done_id` and the answer is < 2 h old and the
   request < 24 h old: set `licence_deploy_seen_id = id`, print one line, exit 0. Otherwise exit 1.
 - `--report FILE`: if `licence_deploy_seen_id > licence_deploy_done_id` and FILE exists and its mtime is not older than the
-  pick-up: parse the uapi JSON (`{"result": {"status": 1|0, "errors": [...]}}`; text around the JSON may be stderr), set
+  pick-up: parse git's output ending in a line `exit=N` (0 = done: "Already up to date." or "Updating a..b" + the "N files
+  changed" line; other = failed with git's lines from the first `error:`/`fatal:`; git output with no `exit=` line = did
+  not finish; the older uapi JSON `{"result": {"status": 1|0, "errors": [...]}}` is still read), set
   `licence_deploy_done_id = seen_id`, `licence_deploy_ok`, `licence_deploy_msg` (scrubbed, <= 500 chars), delete FILE.
   If picked up 15+ minutes ago and there is no result file: record a failure ("left no result"). Then trigger a normal
   licence check-in so the panel hears it now (it also goes with every later check-in).
@@ -36,14 +39,16 @@ Add an optional `deploy` object to the check-in JSON (keep the whole body under 
 
 ## 4. Cron line (cPanel > Cron Jobs, every 5 minutes; USER, folder and branch per site)
 ```
-*/5 * * * * cd /home/USER/SITE && php scripts/deploy-check.php --want && /usr/local/cpanel/bin/uapi --output=jsonpretty VersionControl update repository_root=/home/USER/SITE branch=main > storage/deploy-last.json 2>&1; php scripts/deploy-check.php --report storage/deploy-last.json
+*/5 * * * * cd /home/USER/SITE && /usr/local/bin/php scripts/deploy-check.php --want && { GIT_TERMINAL_PROMPT=0 /usr/bin/git pull --ff-only origin main; echo "exit=$?"; } > storage/deploy-last.json 2>&1; /usr/local/bin/php scripts/deploy-check.php --report storage/deploy-last.json
 ```
 - `&&` runs the pull only when `--want` exits 0; the `;` makes `--report` run every time (keeps the live sha current; a
   missing or older file is a no-op).
-- cPanel UAPI `VersionControl update` pulls ONLY when `branch` is given (cPanel OpenAPI, operation
-  VersionControl-update: "This function only pulls changes from the remote repository if you specify a branch value").
-  Always pass the branch cPanel already has checked out: another branch would switch the live checkout.
-- Update from Remote is a fast-forward-only pull: local changes on the server make it fail (reported as such).
+- The `{ ...; echo "exit=$?"; }` group stays inside the `&&` chain (idle runs write nothing) and puts git's exit code
+  last in the file. The remote is public HTTPS (no credentials); `GIT_TERMINAL_PROMPT=0` makes git fail rather than
+  wait for a password. Sites run straight from the repository (no .cpanel.yml), so this pull IS Update from Remote.
+- Always pull the branch already checked out (here main): another branch would not fast-forward the live checkout.
+- `/usr/local/bin/php`: cron's plain `php` may be php-cgi; the script's CLI guard then exits 1 (nothing pulled).
+- A fast-forward-only pull: local changes on the server make it fail (reported with git's own message).
 - The result file must sit outside the web root or in a folder the web server refuses (`storage/` at the hotels? check
   the hotel's `.htaccess`; otherwise use a dot-folder that is denied).
 
