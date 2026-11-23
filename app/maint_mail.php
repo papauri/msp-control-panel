@@ -15,7 +15,8 @@
 const MAINT_MAIL_CAP = 50;          // people per send
 const MAINT_MAIL_REPEAT = 60;       // seconds: the same draft for the same window again needs "send again"
 const MAINT_MAIL_SUBJECT_MAX = 200;
-const MAINT_MAIL_BODY_MAX = 4000;
+const MAINT_MAIL_BODY_MAX = 4000;     // the text the owner types (placeholders still in)
+const MAINT_MAIL_FINAL_MAX = 20000;  // the message once filled in (a long window message and business name included)
 const MAINT_MAIL_RECENT_DAYS = 7;   // an ended window can still be emailed about for this many days
 const MAINT_MAIL_SETTING = 'maint_mail_';
 
@@ -212,6 +213,45 @@ function maint_mail_build(string $title, string $subject, string $body, array $c
     return ['subject' => maint_mail_subject_line($subject), 'html' => em_layout($title, maint_mail_subject_line($subject), $html, $c, false), 'text' => $text];
 }
 
+/**
+ * Checks the text as the owner typed it (placeholders still in: plain text, length), fills it in ONE pass and builds the
+ * email. Filled values (a business name with "<" in it, a long message) are never checked as typed text: they are escaped
+ * in the HTML. @return array{0:string,1:?array} [error, email]. Pure (needs app/email_templates.php).
+ */
+function maint_mail_render(string $title, string $subject, string $body, array $vars, array $company): array
+{
+    $subject = maint_mail_subject_line($subject);
+    $body = maint_clean_message($body);
+    $err = maint_mail_check($subject, $body);
+    if ($err !== '') {
+        return [$err, null];
+    }
+    $fs = mb_substr(maint_mail_subject_line(maint_mail_fill($subject, $vars)), 0, 255);
+    $fb = maint_mail_fill($body, $vars);
+    if (mb_strlen($fb) > MAINT_MAIL_FINAL_MAX) {
+        return ['The email is too long once the window\'s message is filled in (at most ' . MAINT_MAIL_FINAL_MAX . ' characters): shorten it.', null];
+    }
+    return ['', maint_mail_build($title, $fs, $fb, $company)];
+}
+
+/**
+ * Who is ticked when the compose screen opens: administrators that have not yet had THIS draft about this window
+ * successfully ($sent: lower-case email => when, from cp_email_log status sent). A failed or never-sent admin is ticked.
+ * $posted (the ids ticked on a send that was refused, e.g. a double click): those ids instead of the administrators, still
+ * minus anyone already sent, so "Send it again" never repeats to people it reached.
+ * @return array<int,bool> pms_user_id => ticked. Pure.
+ */
+function maint_mail_default_ticks(array $candidates, array $sent, ?array $posted = null): array
+{
+    $want = $posted === null ? null : array_flip(array_map('intval', $posted));
+    $out = [];
+    foreach ($candidates as $c) {
+        $pick = $want === null ? $c['is_admin'] : isset($want[$c['pms_user_id']]);
+        $out[$c['pms_user_id']] = $pick && !isset($sent[strtolower($c['email'])]);
+    }
+    return $out;
+}
+
 /** True when this person is an administrator of the business: its super admin or a role with every permission. Pure. */
 function maint_mail_is_admin(?array $catalog, array $s): bool
 {
@@ -372,13 +412,23 @@ function maint_mail_context(PDO $pdo, int $windowId, int $now): array
     return ['', $r, $t, $staff, maint_mail_candidates($staff, hms_catalog($t))];
 }
 
-/** The draft filled for this window: ['subject','body'] (plain text). */
-function maint_mail_filled(PDO $pdo, array $r, array $t, string $draft, string $tz): array
+/** The placeholder values for one window (its own message, else the generic message). */
+function maint_mail_window_vars(PDO $pdo, array $r, array $t, array $company, string $tz): array
 {
-    $d = maint_mail_draft($pdo, $draft);
     $msg = $r['message'] ?? null;
-    $vars = maint_mail_vars($r, (string)$t['name'], (is_string($msg) && trim($msg) !== '') ? $msg : maint_default_message($pdo), maint_mail_company(), $tz);
-    return ['subject' => maint_mail_fill($d['subject'], $vars), 'body' => maint_mail_fill($d['body'], $vars)];
+    return maint_mail_vars($r, (string)$t['name'], (is_string($msg) && trim($msg) !== '') ? $msg : maint_default_message($pdo), $company, $tz);
+}
+
+/** Who already got this draft about this window: lower-case email => last successful send (status sent only). */
+function maint_mail_sent_to(PDO $pdo, int $windowId, string $draft): array
+{
+    $st = $pdo->prepare("SELECT to_email, MAX(created_at) AS last FROM cp_email_log WHERE kind = 'maintenance' AND attachment = ? AND status = 'sent' GROUP BY to_email");
+    $st->execute([maint_mail_tag($windowId, $draft)]);
+    $out = [];
+    foreach ($st->fetchAll() as $row) {
+        $out[strtolower((string)$row['to_email'])] = (string)$row['last'];
+    }
+    return $out;
 }
 
 /** Sends of this window per draft key in the last $seconds (PHP clock, as the log rows are written). */
@@ -431,9 +481,7 @@ function maint_mail_send(PDO $pdo, int $windowId, string $draft, string $subject
     }
     $hotel = (string)$t['name'];
     $res['hotel'] = $hotel;
-    $subject = maint_mail_subject_line($subject);
-    $body = maint_clean_message($body);
-    $err = maint_mail_check($subject, $body);
+    $err = maint_mail_check(maint_mail_subject_line($subject), maint_clean_message($body)); // the typed text, placeholders still in
     if ($err !== '') {
         $res['error'] = $err;
         return $res;
@@ -462,14 +510,21 @@ function maint_mail_send(PDO $pdo, int $windowId, string $draft, string $subject
         }
         require_once __DIR__ . '/mailer.php';
         $company = maint_mail_company();
-        $msg = $r['message'] ?? null;
-        $vars = maint_mail_vars($r, $hotel, (is_string($msg) && trim($msg) !== '') ? $msg : maint_default_message($pdo), $company, $tz);
-        $mail = maint_mail_build(maint_mail_drafts()[$draft]['title'], maint_mail_fill($subject, $vars), maint_mail_fill($body, $vars), $company);
+        [$err, $mail] = maint_mail_render(maint_mail_drafts()[$draft]['title'], $subject, $body, maint_mail_window_vars($pdo, $r, $t, $company, $tz), $company);
+        if ($err !== '') {
+            $res['error'] = $err;
+            return $res;
+        }
         $log = $pdo->prepare('INSERT INTO cp_email_log (tenant_id, kind, to_email, subject, status, error, attachment, admin_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         $sentTo = [];
         @set_time_limit(30 + 25 * count($people));
         foreach ($people as $p) {
-            $m = mail_send(['to' => [$p['email']], 'subject' => $mail['subject'], 'html' => $mail['html'], 'text' => $mail['text']]);
+            try {
+                $m = mail_send(['to' => [$p['email']], 'subject' => $mail['subject'], 'html' => $mail['html'], 'text' => $mail['text']]);
+            } catch (Throwable $e) {
+                error_log('maint_mail: send to one person failed: ' . get_class($e) . ': ' . $e->getMessage());
+                $m = ['ok' => false, 'error' => 'an error on this server stopped this email (logged)'];
+            }
             $ok = !empty($m['ok']);
             $res['test'] = $res['test'] || !empty($m['test']);
             if ($ok) {
@@ -487,13 +542,21 @@ function maint_mail_send(PDO $pdo, int $windowId, string $draft, string $subject
                 error_log('maint_mail: email log: ' . get_class($e));
             }
         }
-        audit_log($pdo, $adminId ?: null, 'maintenance_emailed', (int)$t['id'], null, [
-            'id' => $windowId, 'business' => $hotel, 'draft' => $draft, 'subject' => $mail['subject'],
-            'sent' => $res['sent'], 'failed' => $res['failed'], 'to' => $sentTo, 'test_mode' => $res['test'],
-        ]);
+        try {
+            audit_log($pdo, $adminId ?: null, 'maintenance_emailed', (int)$t['id'], null, [
+                'id' => $windowId, 'business' => $hotel, 'draft' => $draft, 'subject' => $mail['subject'],
+                'sent' => $res['sent'], 'failed' => $res['failed'], 'to' => $sentTo, 'test_mode' => $res['test'],
+            ]);
+        } catch (Throwable $e) {
+            error_log('maint_mail: audit: ' . get_class($e));
+        }
         return $res;
     } finally {
-        $pdo->prepare('SELECT RELEASE_LOCK(?)')->execute([$lock]);
+        try {
+            $pdo->prepare('SELECT RELEASE_LOCK(?)')->execute([$lock]);
+        } catch (Throwable $e) {
+            error_log('maint_mail: release lock: ' . get_class($e)); // the lock ends with the connection anyway
+        }
     }
 }
 

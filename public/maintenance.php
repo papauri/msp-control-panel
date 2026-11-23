@@ -90,14 +90,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             : 'Scheduled for ' . count($newIds) . ' business' . (count($newIds) === 1 ? '' : 'es')
             . '. Each one is told now (or at its next check-in, within the hour) and shows the notice to its staff from the time chosen.';
         if ($s('email_admins') === '1') {
-            // Saved and committed above: now email each business's administrators the matching draft (same path as the compose screen).
-            $draft = $action === 'now' ? 'starting' : 'advance';
-            $d = maint_mail_draft($pdo, $draft);
-            foreach ($newIds as $wid) {
-                $res = maint_mail_send($pdo, $wid, $draft, $d['subject'], $d['body'], null, $me, time(), $tz, false);
-                $info .= ' Email to the administrators of ' . ($res['hotel'] !== '' ? $res['hotel'] : 'window ' . $wid) . ': '
-                    . ($res['error'] !== '' ? $res['error'] : maint_mail_result_words($res));
+            // Saved and committed above. Nudge first so each business goes offline (or shows the notice) promptly, then email
+            // each business's administrators the matching draft (same path as the compose screen), then one flash for both.
+            try {
+                backup_nudge_all($pdo, $ids);
+            } catch (Throwable $e) {
+                error_log('maintenance: nudge: ' . get_class($e) . ': ' . $e->getMessage());
             }
+            $draft = $action === 'now' ? 'starting' : 'advance';
+            $mailBad = false; // any refused or failed email shows the flash as an error, not info
+            foreach ($newIds as $wid) {
+                try {
+                    $d = maint_mail_draft($pdo, $draft);
+                    $res = maint_mail_send($pdo, $wid, $draft, $d['subject'], $d['body'], null, $me, time(), $tz, false);
+                    $info .= ' Email to the administrators of ' . ($res['hotel'] !== '' ? $res['hotel'] : 'window ' . $wid) . ': '
+                        . ($res['error'] !== '' ? $res['error'] : maint_mail_result_words($res));
+                    $mailBad = $mailBad || $res['error'] !== '' || (int)($res['failed'] ?? 0) > 0;
+                } catch (Throwable $e) {
+                    error_log('maintenance: email window ' . $wid . ': ' . get_class($e) . ': ' . $e->getMessage());
+                    $info .= ' Email for window ' . $wid . ': failed (an error on this server, logged).';
+                    $mailBad = true;
+                }
+            }
+            flash_set($mailBad ? 'error' : 'info', $info);
+            header('Location: ' . $back);
+            exit;
         }
         flash_set('info', $info);
         maint_back_and_nudge($pdo, $back, $ids);
@@ -120,7 +137,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = ctype_digit($s('id')) ? (int)$s('id') : 0;
         $draft = $s('draft');
         $people = isset($_POST['people']) && is_array($_POST['people']) ? array_values(array_filter($_POST['people'], 'is_string')) : [];
-        $res = maint_mail_send($pdo, $id, $draft, $s('subject'), $s('body'), $people, $me, $now, $tz, $s('again') === '1');
+        try {
+            $res = maint_mail_send($pdo, $id, $draft, $s('subject'), $s('body'), $people, $me, $now, $tz, $s('again') === '1');
+        } catch (Throwable $e) {
+            error_log('maintenance: email window ' . $id . ': ' . get_class($e) . ': ' . $e->getMessage());
+            $res = ['error' => 'The email could not be sent: an error on this server (logged). Check the Emailed column before trying again.'];
+        }
         if ($res['error'] !== '') {
             $_SESSION['maint_mail_form'] = ['id' => $id, 'draft' => $draft, 'subject' => $s('subject'), 'body' => $s('body'), 'people' => $people];
             flash_set('error', $res['error']);
@@ -238,10 +260,13 @@ if (isset($_GET['email'])):
     <p class="flash flash-error"><?= e($merr) ?></p>
 <?php else:
     $mstate = maint_state($mw, $now);
-    $filled = maint_mail_filled($pdo, $mw, $mt, $mdraft, $tz);
-    $msubject = $mform !== null && (string)($mform['draft'] ?? '') === $mdraft ? (string)$mform['subject'] : $filled['subject'];
-    $mbody = $mform !== null && (string)($mform['draft'] ?? '') === $mdraft ? (string)$mform['body'] : $filled['body'];
+    // The draft as written (placeholders in): they are filled once, when it is sent.
+    $dtext = maint_mail_draft($pdo, $mdraft);
+    $msubject = $mform !== null && (string)($mform['draft'] ?? '') === $mdraft ? (string)$mform['subject'] : $dtext['subject'];
+    $mbody = $mform !== null && (string)($mform['draft'] ?? '') === $mdraft ? (string)$mform['body'] : $dtext['body'];
     $mpicked = $mform !== null ? array_map('intval', (array)($mform['people'] ?? [])) : null;
+    $msent = maint_mail_sent_to($pdo, $mid, $mdraft);
+    $mticks = maint_mail_default_ticks($mcands, $msent, $mpicked);
     $hasAdmin = (bool)array_filter($mcands, static fn($c) => $c['is_admin']); ?>
 <h2>Email about the window for <?= e($mt['name']) ?></h2>
 <div class="card">
@@ -267,13 +292,16 @@ if (isset($_GET['email'])):
     <input type="hidden" name="action" value="email_send">
     <input type="hidden" name="id" value="<?= (int)$mid ?>">
     <input type="hidden" name="draft" value="<?= e($mdraft) ?>">
-    <fieldset><legend>Send to<?= $help('Active staff of this business that have an email in their own system (from its last staff list). Administrators are ticked; tick others only when they need to know. At most ' . MAINT_MAIL_CAP . ' people; each gets their own email.') ?></legend>
+    <fieldset><legend>Send to<?= $help('Active staff of this business that have an email in their own system (from its last staff list). Administrators are ticked, except those this draft already went to about this window ("Sent"); tick others only when they need to know. At most ' . MAINT_MAIL_CAP . ' people; each gets their own email.') ?></legend>
         <?php foreach ($mcands as $c): ?>
-            <label class="check"><input type="checkbox" name="people[]" value="<?= (int)$c['pms_user_id'] ?>"<?= ($mpicked === null ? $c['is_admin'] : in_array($c['pms_user_id'], $mpicked, true)) ? ' checked' : '' ?>>
-                <?= e($c['name']) ?> <span class="tag"><?= e($c['is_admin'] ? 'Administrator' : ($c['role'] !== '' ? $c['role'] : 'Staff')) ?></span> <span class="muted"><?= e($c['email']) ?></span></label>
+            <label class="check"><input type="checkbox" name="people[]" value="<?= (int)$c['pms_user_id'] ?>"<?= $mticks[$c['pms_user_id']] ? ' checked' : '' ?>>
+                <?= e($c['name']) ?> <span class="tag"><?= e($c['is_admin'] ? 'Administrator' : ($c['role'] !== '' ? $c['role'] : 'Staff')) ?></span> <span class="muted"><?= e($c['email']) ?></span><?php
+                $sk = strtolower($c['email']);
+                if (isset($msent[$sk])): ?> <span class="tag">Sent <?= e(date('D j M Y, H:i', (int)strtotime($msent[$sk]))) ?></span><?php endif; ?></label>
         <?php endforeach; ?>
     </fieldset>
     <label>Subject <input type="text" name="subject" required maxlength="<?= (int)MAINT_MAIL_SUBJECT_MAX ?>" value="<?= e($msubject) ?>"></label>
+    <p class="muted">Filled in when it is sent: <?php $ph = []; foreach (maint_mail_placeholders() as $k => $w) { $ph[] = '<code>' . e($k) . '</code> ' . e($w); } echo implode('; ', $ph); ?>.</p>
     <label>Message <small class="muted">(plain text; a blank line starts a new paragraph; your company details and signature are added below it)</small>
         <textarea name="body" rows="12" required maxlength="<?= (int)MAINT_MAIL_BODY_MAX ?>"><?= e($mbody) ?></textarea></label>
     <label class="check"><input type="checkbox" name="again" value="1"> Send it again<?= $help('Only needed when this same draft was sent about this window less than a minute ago: it stops a double click sending everything twice.') ?></label>

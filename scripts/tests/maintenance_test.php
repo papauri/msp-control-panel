@@ -227,8 +227,34 @@ t_ok('mail: ended 7 days and a second ago refused', maint_mail_can_email(array_m
 t_eq('mail: tag round trip', 12, maint_mail_tag_id(maint_mail_tag(12, 'back_online')));
 t_eq('mail: a foreign attachment name is not a window', 0, maint_mail_tag_id('invoice-12.pdf'));
 t_eq('mail: result words', 'Sent to 2, failed 1 (c@d.test: refused).', maint_mail_result_words(['sent' => 2, 'failed' => 1, 'reasons' => ['c@d.test: refused'], 'test' => false]));
+// fix 2026-11-24: who is ticked when one person already got this draft
+$ticks = maint_mail_default_ticks($cands, ['admin@hotel.test' => '2026-11-24 10:00:00']);
+t_eq('mail: an admin already sent this draft is unticked, an admin never sent is ticked, staff stay unticked', [2 => true, 3 => false, 1 => false], $ticks);
+t_eq('mail: the sent match ignores case', false, maint_mail_default_ticks($cands, ['boss@hotel.test' => 'x'])[2] ?? null);
+t_eq('mail: nothing sent yet: the administrators are ticked', [2 => true, 3 => true, 1 => false], maint_mail_default_ticks($cands, []));
+t_eq('mail: after a refused send the posted ticks come back minus anyone already sent', [2 => true, 3 => false, 1 => true],
+    maint_mail_default_ticks($cands, ['admin@hotel.test' => '2026-11-24 10:00:00'], ['2', '3', '1']));
+t_eq('mail: posted ticks keep a non-admin and drop an unticked admin', [2 => false, 3 => false, 1 => true], maint_mail_default_ticks($cands, [], [1]));
+// fix 2026-11-24: the checks run on the typed text (placeholders in), filled values are escaped, one fill pass
+$d = maint_mail_drafts()['advance'];
+$lt = maint_mail_vars($win, 'Inn <North> & Co', str_repeat('Long words. ', 300), $co, 'Africa/Blantyre');
+[$e1, $m1] = maint_mail_render($d['title'], $d['subject'], $d['body'], $lt, $co);
+t_eq('mail: a "<" in the business name and a message over 4000 characters once filled are allowed', '', $e1);
+t_ok('mail: that name is escaped in the HTML and kept in the subject', is_array($m1) && strpos($m1['html'], 'Inn &lt;North&gt; &amp; Co') !== false
+    && strpos($m1['html'], '<North>') === false && strpos($m1['subject'], 'Inn <North> & Co') !== false);
+t_eq('mail: typed HTML is still refused', 'Write the subject and message as plain text (no HTML).', maint_mail_render('T', 'Hi {hotel}', 'Hello <b>there</b>', $lt, $co)[0]);
+t_ok('mail: a typed message over 4000 characters is still refused', maint_mail_render('T', 'Hi', str_repeat('a', MAINT_MAIL_BODY_MAX + 1), $lt, $co)[0] !== '');
+t_ok('mail: over the final cap once filled is refused', maint_mail_render('T', 'Hi', '{message}', array_merge($lt, ['{message}' => str_repeat('a', MAINT_MAIL_FINAL_MAX + 1)]), $co)[0] !== '');
+[$e1, $m2] = maint_mail_render('T', '{hotel}', "Hi {hotel}\n\n{message}", array_merge($lt, ['{hotel}' => 'Inn {message}', '{message}' => 'Words {hotel}']), $co);
+t_ok('mail: single pass: a value holding a placeholder is never filled again', $e1 === '' && $m2['subject'] === 'Inn {message}'
+    && strpos($m2['text'], 'Hi Inn {message}') !== false && strpos($m2['text'], 'Words {hotel}') !== false);
+t_ok('mail: the filled subject is cut to the log column size', mb_strlen(maint_mail_render('T', '{hotel}', 'b', array_merge($lt, ['{hotel}' => str_repeat('n', 400)]), $co)[1]['subject']) === 255);
 $mailSrc = (string)file_get_contents($root . '/app/maint_mail.php');
-t_ok('mail: one email per person through mail_send', (bool)preg_match("/foreach \(\\\$people as \\\$p\) \{\s*\\\$m = mail_send\(\['to' => \[\\\$p\['email'\]\]/", $mailSrc));
+t_ok('mail: the send builds through maint_mail_render (one fill, checks on the typed text)', substr_count($mailSrc, 'maint_mail_fill(') === 3
+    && strpos($mailSrc, '[$err, $mail] = maint_mail_render(') !== false);
+t_ok('page: the compose screen starts from the draft as written (not filled)', strpos($pageSrc, '$dtext = maint_mail_draft($pdo, $mdraft);') !== false && strpos($pageSrc, 'maint_mail_filled') === false);
+t_ok('page: with "email the administrators" the nudge runs before the emails', (bool)preg_match('/backup_nudge_all\(\$pdo, \$ids\);.*?maint_mail_send\(/s', $pageSrc));
+t_ok('mail: one email per person through mail_send', (bool)preg_match("/foreach \(\\\$people as \\\$p\) \{\s*try \{\s*\\\$m = mail_send\(\['to' => \[\\\$p\['email'\]\]/", $mailSrc));
 t_ok('mail: the page sends only by pms_user_id (no address field)', strpos($pageSrc, 'name="people[]" value="<?= (int)$c[\'pms_user_id\'] ?>"') !== false && strpos($pageSrc, 'type="email"') === false);
 t_ok('bootstrap loads maint_mail.php', strpos((string)file_get_contents($root . '/app/bootstrap.php'), "require_once __DIR__ . '/maint_mail.php';") !== false);
 
