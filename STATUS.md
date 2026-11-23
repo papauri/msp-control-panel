@@ -83,6 +83,13 @@ the window; (2) double-check the backup logic; (3) see every push to git (commit
   first Liwonde Update from Remote is the live test of the DB writes and uapi. LATER (review): scrub
   `https://user:pass@` in result messages (hotel + panel); a php-cgi cron `php` silently stops the feature.
   (4) Once live, Rosalyn's writes one new `site_settings` row (`licence_maintenance`) at its next check-in.
+  (5) 2026-11-23 set-up with the owner: on this host cron's plain `php` is php-cgi (`/usr/bin/php`); the CLI is
+  **`/usr/local/bin/php`** (8.1, same as the sites). Cron lines added for Liwonde (`/home/p601229/liwonde_sun_hotel`)
+  and Rosalyn's (`/home/p601229/rosalyns_hotel`) with `/usr/local/bin/php`; `--want` tested from cron = exit 1.
+  GitHub token saved; both live copies added and report their commit (up to date). First Liwonde request 11:49
+  waiting on its run. Panel cron not added yet. Owner 2026-11-23: Update from Remote asks for the password only
+  (`auth_reconfirm_password`, `a1cd0b6`). LATER: guide section 18 / spec / deploy-check comments still show plain
+  `php`; no direct test of `auth_reconfirm_password`.
 - LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
   min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only
   by the nudge (else up to ~1 h); admins cannot open the Licence page during an admin window.
