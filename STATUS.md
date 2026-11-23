@@ -103,6 +103,9 @@ the window; (2) double-check the backup logic; (3) see every push to git (commit
   (8) 2026-11-24 UI pass 1 (owner: simple, compact, uniform): app.css only, `d472c92`. Pass 2 = page by page from the
   owner's screenshots; known: numeric th left over right-aligned .num (view_th needs a class), h1/flash order differs,
   audit.php has no 10/25/50/All picker, index.php and clients.php do not paginate.
+  (9) 2026-11-24 modern look (owner approved the mockup): new app.css + grouped sidebar shell + view_page_head on 23
+  pages, layout only, `c368327`. Not yet seen on the live server: owner pulls, then sends screenshots of anything off.
+  Not approved/not built: Businesses search/tabs/Owed column, year-less maintenance dates.
 - LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
   min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only
   by the nudge (else up to ~1 h); admins cannot open the Licence page during an admin window.
