@@ -77,8 +77,11 @@ the window; (2) double-check the backup logic; (3) see every push to git (commit
   hms 107, ai 144, clients 114, trials 270, all 0 failed; 20 pure suites pass. Panel pushed.
 - **Next:** (1) owner: first maintenance window on Liwonde (tenant 2) only, short, once Liwonde's live copy has pulled
   `46efbca`; check "Seen by the hotel" fills in. (2) owner: GitHub read-only token on Deployments + the 5-minute cron
-  for the panel (Guide section 18); first real uapi run is the test. (3) Hotel side of Deployments from
-  `.claude/DEPLOY_HOTEL_SPEC.md` (Liwonde first, port): owner to say when; until then hotel requests lapse.
+  for the panel (Guide section 18); first real uapi run is the test. (3) Hotel side of Deployments BUILT and pushed
+  2026-11-23: Liwonde `3fccfba`, Rosalyn's `1bad20c` (`scripts/deploy-check.php`; no second pull while one runs).
+  Owner adds the same 5-minute cron at each hotel (USER/SITE = Repository Path in cPanel Git Version Control);
+  first Liwonde Update from Remote is the live test of the DB writes and uapi. LATER (review): scrub
+  `https://user:pass@` in result messages (hotel + panel); a php-cgi cron `php` silently stops the feature.
   (4) Once live, Rosalyn's writes one new `site_settings` row (`licence_maintenance`) at its next check-in.
 - LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
   min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only

@@ -1,6 +1,6 @@
 # Hotel side of "Update from Remote" (Deployments page, panel 2026-11-23)
 
-Not built yet. Build at Liwonde first, then port to Rosalyn's (owner's standing port OK). The panel side is live code in
+BUILT 2026-11-23: Liwonde 3fccfba, Rosalyn's 1bad20c (adds: no second pick-up while an earlier one is still running). The panel side is live code in
 `app/deploy.php` (`deploy_answer_fields`, `deploy_clean_report`, `deploy_report_changes`) and `public/api/licence.php`.
 No cPanel credentials anywhere (owner 2026-11-23: "no credentials: cron"). The hotel never pushes; it only pulls its own
 branch with cPanel's own command-line UAPI, run by the account's cron.
