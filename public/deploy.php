@@ -136,7 +136,7 @@ $reqHtml = static function (array $v) use ($pillReq): string {
 };
 
 view_head('Deployments');
-echo '<h1>Deployments</h1>';
+echo view_page_head('Deployments');
 view_flash();
 ?>
 <div class="card">

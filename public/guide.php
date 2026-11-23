@@ -6,8 +6,7 @@ $admin = auth_require($pdo);
 
 view_head('Guide');
 ?>
-<h1>Licence panel guide</h1>
-<p class="muted">How to use this panel. Only signed-in admins can see this page. Invoices, quotations, payments, receipts, clients, free trials, plans, automations and reports: see the <a href="guide-sales.php">Sales and billing guide</a>.</p>
+<?= view_page_head('Licence panel guide', 'How to use this panel. Only signed-in admins can see this page. Invoices, quotations, payments, receipts, clients, free trials, plans, automations and reports: see the <a href="guide-sales.php">Sales and billing guide</a>.') ?>
 
 <h2>1. What this panel does</h2>
 <p>This panel keeps a record of each business that uses the hotel system (PMS). It records what each business pays for.</p>

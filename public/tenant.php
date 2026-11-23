@@ -424,7 +424,7 @@ foreach ($errors as $m) {
     echo '<p class="flash flash-error">' . e($m) . '</p>';
 }
 
-echo '<h1>' . ($tenant ? e($tenant['name']) : 'Add business') . '</h1>';
+echo view_page_head($tenant ? e($tenant['name']) : 'Add business');
 
 if ($tenant) {
     $computed = status_compute($tenant, $today);

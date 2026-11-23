@@ -96,9 +96,8 @@ $roleOptions = static function (string $selected = '') use ($catalog): string {
 };
 
 view_head('Staff: ' . $tenant['name']);
+echo view_page_head('HMS staff: ' . e($tenant['name']), '', '<a class="button secondary" href="tenant.php?id=' . $tid . '">&larr; Back to the business</a>');
 view_flash();
-echo '<h1>HMS staff: ' . e($tenant['name']) . '</h1>'
-    . '<p class="muted"><a href="tenant.php?id=' . $tid . '">&larr; Back to the business</a></p>';
 
 echo '<section class="card"><h2>How changes reach the HMS</h2>'
     . '<dl class="facts">'

@@ -107,7 +107,7 @@ $mb = static fn(int $b): string => $b > 0 ? e(number_format($b / 1048576, 1) . '
 $pillFor = ['ok' => 'active', 'asked' => 'grace', 'none' => 'grace', 'overdue' => 'read_only', 'failed' => 'suspended'];
 
 view_head('Backups');
-echo '<h1>Backups</h1>';
+echo view_page_head('Backups');
 view_flash();
 ?>
 <div class="card">

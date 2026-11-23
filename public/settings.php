@@ -78,12 +78,11 @@ $area = static fn(string $k, string $label, int $rows, int $max): string =>
     '<label>' . e($label) . '<textarea name="' . e($k) . '" rows="' . $rows . '" maxlength="' . $max . '">' . e($v($k)) . '</textarea></label>';
 
 view_head('Settings');
-echo '<h1>Settings</h1>';
+echo view_page_head('Settings', 'These details are printed on every invoice, quotation, statement and receipt, and on the emails that carry them.');
 view_flash();
 foreach (array_merge($errors, $itemErrors) as $m) {
     echo '<p class="flash flash-error">' . e($m) . '</p>';
 }
-echo '<p class="muted">These details are printed on every invoice, quotation, statement and receipt, and on the emails that carry them.</p>';
 
 echo '<form method="post" action="settings.php">' . csrf_field() . '<input type="hidden" name="action" value="save_settings">'
     . '<section class="card"><h2>Company</h2><div class="bill-grid">'

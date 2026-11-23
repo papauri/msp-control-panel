@@ -52,7 +52,7 @@ $exists = is_file(keys_private_path());
 
 view_head('Signing key');
 ?>
-<h1>Signing key</h1>
+<?= view_page_head('Signing key') ?>
 <?php view_flash(); ?>
 <div class="card">
 <?php if ($public !== null): ?>

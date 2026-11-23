@@ -17,8 +17,8 @@ $rows = $pdo->query(
 )->fetchAll();
 
 view_head('Businesses');
+echo view_page_head('Businesses', '', '<a class="button" href="tenant.php">Add business</a>');
 view_flash();
-echo '<h1>Businesses</h1>';
 if (!$rows) {
     echo '<p>No businesses yet. <a href="tenant.php">Add the first business</a>.</p>';
 } else {

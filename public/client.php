@@ -229,7 +229,7 @@ $detailsForm = static function () use ($client, $v): string {
 
 if ($isNewForm) {
     view_head('Add client');
-    echo '<p class="muted"><a href="clients.php">Clients</a></p><h1>Add client</h1>';
+    echo '<p class="muted"><a href="clients.php">Clients</a></p>' . view_page_head('Add client');
     view_flash();
     foreach ($errors as $m) {
         echo '<p class="flash flash-error">' . e($m) . '</p>';
@@ -258,9 +258,14 @@ echo '<script src="assets/billing.js" defer></script>';
 echo '<p class="muted"><a href="clients.php">Clients</a></p>';
 $today = status_today();
 $trialWords = $tenant ? trial_words($tenant, $today) : '';
-echo '<h1>' . e($client['name']) . ' <span class="tag">' . e(client_kinds()[$client['kind']] ?? $client['kind']) . '</span>'
+echo view_page_head(e($client['name']) . ' <span class="tag">' . e(client_kinds()[$client['kind']] ?? $client['kind']) . '</span>'
     . ($tenant ? ' <span class="tag">hosted</span>' : '') . ((int)$client['is_active'] !== 1 ? ' <span class="pill pill-suspended">Inactive</span>' : '')
-    . ($trialWords !== '' ? ' ' . view_trial_tag($trialWords) : '') . '</h1>';
+    . ($trialWords !== '' ? ' ' . view_trial_tag($trialWords) : ''), '',
+    '<a class="button" href="document.php?new=invoice&amp;client=' . $cid . '">New invoice</a>'
+    . '<a class="button secondary" href="document.php?new=quote&amp;client=' . $cid . '">New quote</a>'
+    . '<a class="button secondary" href="statement.php?client=' . $cid . '">Statement</a>'
+    . '<a class="button secondary" href="#pay">Record payment</a>'
+    . '<a class="button secondary" href="recurring.php?new=1&amp;client=' . $cid . '">New recurring invoice</a>');
 view_flash();
 if ($tenant && trial_ending_within($tenant, $today, 7)) {
     echo '<p class="flash flash-info">The free trial of ' . e($tenant['name']) . ' ends on ' . e(billing_date((string)$tenant['trial_until']))
@@ -269,12 +274,6 @@ if ($tenant && trial_ending_within($tenant, $today, 7)) {
 foreach ($errors as $m) {
     echo '<p class="flash flash-error">' . e($m) . '</p>';
 }
-
-echo '<p class="bill-actions"><a class="button" href="document.php?new=invoice&amp;client=' . $cid . '">New invoice</a>'
-    . '<a class="button secondary" href="document.php?new=quote&amp;client=' . $cid . '">New quote</a>'
-    . '<a class="button secondary" href="statement.php?client=' . $cid . '">Statement</a>'
-    . '<a class="button secondary" href="#pay">Record payment</a>'
-    . '<a class="button secondary" href="recurring.php?new=1&amp;client=' . $cid . '">New recurring invoice</a></p>';
 
 // Contact card
 echo '<section class="card bill-contact"><h2>Contact</h2><div class="bill-stats">'

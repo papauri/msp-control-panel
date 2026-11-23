@@ -47,9 +47,8 @@ $tempPw = static function (string $label): string {
 };
 
 view_head('Users');
-echo '<h1>Users</h1>';
+echo view_page_head('Users', 'Everyone here can do everything in the panel. Add only people who need it, and remove them when they no longer do.');
 view_flash();
-echo '<p class="muted">Everyone here can do everything in the panel. Add only people who need it, and remove them when they no longer do.</p>';
 echo '<div class="scroll"><table class="list"><thead><tr>'
     . view_th('Email', 'The person\'s sign-in name.', 'Sign-in name')
     . view_th('Status', 'Set up: signs in with password + code. Waiting: has a temporary password and has not finished the first sign-in yet.', 'Set up or waiting')

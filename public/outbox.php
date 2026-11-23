@@ -63,11 +63,10 @@ $statusPill = static function (array $o): string {
 };
 
 view_head('Outbox');
-echo '<h1>Outbox</h1>';
-view_flash();
-echo '<p class="muted">Emails the automations prepared. Those set to "ask me first" wait here until you send or skip them; '
+echo view_page_head('Outbox', 'Emails the automations prepared. Those set to "ask me first" wait here until you send or skip them; '
     . 'automatic ones that failed wait here to be retried. Nothing here is ever sent twice. '
-    . '<a href="automations.php">Automations</a> sets what is automatic.</p>';
+    . '<a href="automations.php">Automations</a> sets what is automatic.');
+view_flash();
 echo '<nav class="tabs"><a href="outbox.php"' . ($tab === 'waiting' ? ' class="active"' : '') . '>Waiting (' . (int)($counts['pending'] + $counts['failed']) . ')</a>'
     . '<a href="outbox.php?tab=history"' . ($tab === 'history' ? ' class="active"' : '') . '>History</a></nav>';
 

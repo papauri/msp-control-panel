@@ -66,7 +66,7 @@ $head = static function (string $title, string $exportKey, string $help) use ($q
 };
 
 view_head('Reports');
-echo '<h1>Reports</h1>';
+echo view_page_head('Reports');
 view_flash();
 ?>
 <section class="card">

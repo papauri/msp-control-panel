@@ -128,7 +128,7 @@ t_ok('page: CSRF on every POST', strpos($pageSrc, "csrf_require();") !== false &
 t_ok('page: no inline script (the CSP forbids it)', stripos($pageSrc, 'onsubmit=') === false && stripos($pageSrc, 'onclick=') === false);
 t_ok('page: says the staff system covers front desk, POS and kitchen', strpos($pageSrc, 'front desk, POS, kitchen') !== false);
 t_ok('endpoint: maintenance inside its own try/catch', (bool)preg_match('/try \{\s*\$seen = .*?maint_answer_block.*?\} catch \(Throwable \$e\)/s', $apiSrc));
-t_ok('nav: Maintenance link', strpos((string)file_get_contents($root . '/app/view.php'), 'href="maintenance.php"') !== false);
+t_ok('nav: Maintenance link', strpos((string)file_get_contents($root . '/app/view.php'), "['maintenance.php', 'Maintenance']") !== false);
 t_ok('migration 014: no ";" inside a statement (migrate.php splits on it)', (static function (string $sql): bool {
     $sql = (string)preg_replace('/^\s*--.*$/m', '', $sql);
     return count(array_filter(array_map('trim', explode(';', $sql)))) === 1;

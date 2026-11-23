@@ -13,9 +13,8 @@ $f = ['kind' => isset(client_kinds()[$g('kind')]) ? $g('kind') : '', 'hosted' =>
 $rows = client_search($pdo, $q, ['kind' => $f['kind'], 'hosted' => $f['hosted'], 'active' => $f['active'] === 'any' ? '' : $f['active']]);
 
 view_head('Clients');
-echo '<h1>Clients</h1>';
+echo view_page_head('Clients', '', '<a class="button" href="client.php?new=1">Add client</a>');
 view_flash();
-echo '<p class="bill-actions"><a class="button" href="client.php?new=1">Add client</a></p>';
 $sel = static fn(string $cur, string $val): string => $cur === $val ? ' selected' : '';
 echo '<form method="get" action="clients.php" class="bill-filter">'
     . '<label>Search<input type="text" name="q" maxlength="100" value="' . e($q) . '" placeholder="Name, contact, email or phone"></label>'

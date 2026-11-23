@@ -74,11 +74,10 @@ $recentList = static function (array $rows): string {
 };
 
 view_head('Automations');
-echo '<h1>Automations</h1>';
-view_flash();
-echo '<p class="muted">Emails the panel prepares by itself. For each one choose <strong>Off</strong>, <strong>Ask me first</strong> (it waits in the '
+echo view_page_head('Automations', 'Emails the panel prepares by itself. For each one choose <strong>Off</strong>, <strong>Ask me first</strong> (it waits in the '
     . '<a href="outbox.php">Outbox</a> for one click) or <strong>Send automatically</strong>. Nothing is ever sent twice for the same payment, '
-    . 'invoice or reminder day. While MAIL_TEST_TO is set in .env every email goes only to that address.</p>';
+    . 'invoice or reminder day. While MAIL_TEST_TO is set in .env every email goes only to that address.');
+view_flash();
 if ($counts['pending'] + $counts['failed'] > 0) {
     echo '<p class="flash flash-info"><a href="outbox.php">' . (int)($counts['pending'] + $counts['failed']) . ' email(s) waiting in the Outbox.</a></p>';
 }

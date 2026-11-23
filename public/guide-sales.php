@@ -7,8 +7,7 @@ $admin = auth_require($pdo);
 
 view_head('Sales and billing guide');
 ?>
-<h1>Sales and billing guide</h1>
-<p class="muted">Everything ProManaged IT sells and bills, from the first quotation to the receipt. Only signed-in admins can see this page. The licence side (businesses, signing key, backups, users) is in the <a href="guide.php">main guide</a>.</p>
+<?= view_page_head('Sales and billing guide', 'Everything ProManaged IT sells and bills, from the first quotation to the receipt. Only signed-in admins can see this page. The licence side (businesses, signing key, backups, users) is in the <a href="guide.php">main guide</a>.') ?>
 
 <h2 id="how">1. How the department works</h2>
 <p>One person runs it; the panel does the routine work.</p>

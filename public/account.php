@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 view_head('My account');
-echo '<h1>My account</h1>';
+echo view_page_head('My account');
 view_flash();
 ?>
 <div class="card">

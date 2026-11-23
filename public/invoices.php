@@ -37,7 +37,9 @@ foreach ($owing as $o) {
 }
 
 view_head('Billing');
-echo '<h1>Billing</h1>';
+echo view_page_head('Billing', '', '<a class="button" href="document.php?new=invoice' . ($fClient ? '&amp;client=' . $fClient : '') . '">New invoice</a>'
+    . '<a class="button secondary" href="document.php?new=quote' . ($fClient ? '&amp;client=' . $fClient : '') . '">New quotation</a>'
+    . '<a class="button secondary" href="clients.php">Clients</a><a class="button secondary" href="recurring.php">Recurring invoices</a>');
 view_flash();
 
 // Billing board: what needs attention now. Amounts per currency, never added together.
@@ -86,9 +88,7 @@ foreach ($totals as $c => $t) {
         . '<p><span class="muted">Overdue (' . e($c) . ')</span><strong' . ($t['overdue'] > BILLING_TOLERANCE ? ' class="bill-overdue"' : '') . '>'
         . e(billing_money($t['overdue'], $c)) . '</strong></p>';
 }
-echo '</div><p class="bill-actions"><a class="button" href="document.php?new=invoice' . ($fClient ? '&amp;client=' . $fClient : '') . '">New invoice</a>'
-    . '<a class="button secondary" href="document.php?new=quote' . ($fClient ? '&amp;client=' . $fClient : '') . '">New quotation</a>'
-    . '<a class="button secondary" href="clients.php">Clients</a><a class="button secondary" href="recurring.php">Recurring invoices</a></p>'
+echo '</div>'
     . '<p class="muted">Owed counts sent invoices only; drafts and void invoices never count. Overdue means past the due date.</p></section>';
 
 $tabUrl = static fn(string $t): string => 'invoices.php?tab=' . $t . ($fClient ? '&amp;client=' . $fClient : '');

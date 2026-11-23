@@ -125,10 +125,10 @@ $modes = recurring_send_modes();
 if (!$rec && !$isNew) {
     $all = recurring_list($pdo);
     view_head('Recurring invoices');
-    echo '<p class="muted"><a href="invoices.php">Billing</a></p><h1>Recurring invoices</h1>';
+    echo '<p class="muted"><a href="invoices.php">Billing</a></p>'
+        . view_page_head('Recurring invoices', 'Each schedule makes an invoice on its date (the daily run), then sends it, waits in the Outbox, or stays a draft, as you choose.',
+            '<a class="button" href="recurring.php?new=1">New recurring invoice</a>');
     view_flash();
-    echo '<p class="bill-actions"><a class="button" href="recurring.php?new=1">New recurring invoice</a></p>'
-        . '<p class="muted">Each schedule makes an invoice on its date (the daily run), then sends it, waits in the Outbox, or stays a draft, as you choose.</p>';
     if (!$all) {
         echo '<p class="muted">No recurring invoices yet.</p>';
     } else {
@@ -216,7 +216,7 @@ $client = (int)$rec['client_id'] > 0 ? client_find($pdo, (int)$rec['client_id'])
 view_head($rid ? 'Recurring: ' . $rec['title'] : 'New recurring invoice');
 echo '<script src="assets/billing.js" defer></script>';
 echo '<p class="muted"><a href="recurring.php">Recurring invoices</a>' . ($client ? ' &rsaquo; <a href="client.php?id=' . (int)$client['id'] . '">' . e($client['name']) . '</a>' : '') . '</p>';
-echo '<h1>' . ($rid ? e($rec['title']) . ((int)$rec['is_active'] === 1 ? ' <span class="pill pill-active">Active</span>' : ' <span class="pill pill-suspended">Paused</span>') : 'New recurring invoice') . '</h1>';
+echo view_page_head($rid ? e($rec['title']) . ((int)$rec['is_active'] === 1 ? ' <span class="pill pill-active">Active</span>' : ' <span class="pill pill-suspended">Paused</span>') : 'New recurring invoice');
 view_flash();
 foreach ($errors as $m) {
     echo '<p class="flash flash-error">' . e($m) . '</p>';

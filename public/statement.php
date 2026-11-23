@@ -81,7 +81,7 @@ $curTotals = $sum['totals'][$cur] ?? ['owed' => 0.0, 'overdue' => 0.0];
 
 view_head('Statement - ' . $client['name']);
 echo '<p class="muted"><a href="invoices.php?tab=owing">Billing</a> &rsaquo; <a href="client.php?id=' . $clientId . '">' . e($client['name']) . '</a></p>';
-echo '<h1>Statement: ' . e($client['name']) . ' <span class="tag">' . e($cur) . '</span></h1>';
+echo view_page_head('Statement: ' . e($client['name']) . ' <span class="tag">' . e($cur) . '</span>');
 view_flash();
 
 echo '<section class="card"><div class="bill-stats">'

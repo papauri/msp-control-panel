@@ -118,12 +118,11 @@ $dots = "\u{2022}\u{2022}\u{2022}\u{2022}";
 $deployProblem = ai_deploy_problem($cfg, $hasKey ? 'x' : null, ai_current_hash($cfg), false, $licensed, time());
 
 view_head('Assistant: ' . $tenant['name']);
-view_flash();
-echo '<h1>Assistant (AI): ' . e($tenant['name']) . '</h1>'
-    . '<p class="muted"><a href="tenant.php?id=' . $tid . '">&larr; Back to the business</a></p>'
-    . '<p class="muted">Set up this business\'s Assistant here: its AI provider key and models. The panel tests them first; only a set-up that passed '
+echo view_page_head('Assistant (AI): ' . e($tenant['name']), 'Set up this business\'s Assistant here: its AI provider key and models. The panel tests them first; only a set-up that passed '
     . 'can be sent. The hotel tests the key again itself before it changes anything. Its own administrators may change the Assistant afterwards '
-    . '(Assistant Settings in the HMS); nothing here overwrites that until you send again.</p>';
+    . '(Assistant Settings in the HMS); nothing here overwrites that until you send again.',
+    '<a class="button secondary" href="tenant.php?id=' . $tid . '">&larr; Back to the business</a>');
+view_flash();
 
 // ---- Subscription
 $plan = null;

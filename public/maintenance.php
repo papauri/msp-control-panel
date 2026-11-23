@@ -177,10 +177,10 @@ $link = static function (array $over) use ($view, $fTenant, $perIn, $page): stri
 $when = static fn($t): string => $t !== null && (int)$t > 0 ? e(date('D j M Y, H:i', (int)$t)) : view_empty();
 $pillFor = ['upcoming' => 'grace', 'announced' => 'trial', 'offline' => 'suspended', 'ended' => 'active', 'cancelled' => 'read_only'];
 $scopeShort = ['admin' => 'Staff system', 'site' => 'Guest website', 'both' => 'Staff system and guest website'];
-$help = static fn(string $t): string => ' <span class="muted" title="' . e($t) . '" aria-label="' . e($t) . '">(?)</span>';
+$help = static fn(string $t): string => ' <span class="q" tabindex="0" role="note" title="' . e($t) . '" data-help="' . e($t) . '" aria-label="' . e($t) . '">?</span>';
 
 view_head('Maintenance');
-echo '<h1>Maintenance</h1>';
+echo view_page_head('Maintenance');
 view_flash();
 if (!$ready): ?>
 <p class="flash flash-error">Maintenance is not set up on this panel yet. Apply migration 014 (<code>php scripts/migrate.php</code>) and reload this page.</p>

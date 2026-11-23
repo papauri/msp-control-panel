@@ -28,7 +28,7 @@ function audit_pretty(?string $json): string
 }
 
 view_head('Audit log');
-echo '<h1>Audit log</h1><p class="muted">Every change and sign-in, newest first.</p>';
+echo view_page_head('Audit log', 'Every change and sign-in, newest first.');
 echo '<div class="scroll"><table><thead><tr>'
     . view_th('When', 'Date and time of the action.', 'Date and time')
     . view_th('Who', 'The admin who did it. A dash means a failed sign-in by an unknown email.', 'Admin who did it')

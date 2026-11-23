@@ -366,8 +366,8 @@ foreach ($errors as $m) {
 }
 echo '<p class="muted"><a href="invoices.php' . ($isInvoice ? '' : '?tab=quotes') . '">Billing</a>'
     . ($client ? ' &rsaquo; <a href="client.php?id=' . (int)$client['id'] . '">' . e($client['name']) . '</a>' : '') . '</p>';
-echo '<h1>' . ($isNew ? 'New ' . e(strtolower($label)) : e($label . ' ' . $doc['number']) . ' <span class="pill pill-' . e($pillClass[$doc['status']] ?? 'grace') . '">'
-    . e($statuses[$doc['status']] ?? $doc['status']) . '</span>' . ($doc['is_overdue'] ? ' <span class="pill pill-suspended">Overdue</span>' : '')) . '</h1>';
+echo view_page_head($isNew ? 'New ' . e(strtolower($label)) : e($label . ' ' . $doc['number']) . ' <span class="pill pill-' . e($pillClass[$doc['status']] ?? 'grace') . '">'
+    . e($statuses[$doc['status']] ?? $doc['status']) . '</span>' . ($doc['is_overdue'] ? ' <span class="pill pill-suspended">Overdue</span>' : ''));
 
 // Owner-only profit block (never printed on the PDF or in emails).
 function doc_profit_html(array $items, float $discount, string $cur): string
