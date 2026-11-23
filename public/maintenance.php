@@ -79,16 +79,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         if ($err) {
-            $_SESSION['maint_form'] = array_intersect_key($_POST, array_flip(['action', 'scope', 'starts', 'ends', 'lead', 'message', 'all', 'tenants', 'amount', 'unit']));
+            $_SESSION['maint_form'] = array_intersect_key($_POST, array_flip(['action', 'scope', 'starts', 'ends', 'lead', 'message', 'all', 'tenants', 'amount', 'unit', 'email_admins']));
             flash_set('error', implode(' ', $err));
             header('Location: ' . $back);
             exit;
         }
-        flash_set('info', $action === 'now'
+        $info = $action === 'now'
             ? 'Offline now for ' . count($newIds) . ' business' . (count($newIds) === 1 ? '' : 'es') . ', until '
                 . date('Y-m-d H:i', $clean['ends_at']) . '. Each one is told now and goes offline within seconds (or at its next check-in if it cannot be reached); it comes back on by itself at the end.'
             : 'Scheduled for ' . count($newIds) . ' business' . (count($newIds) === 1 ? '' : 'es')
-            . '. Each one is told now (or at its next check-in, within the hour) and shows the notice to its staff from the time chosen.');
+            . '. Each one is told now (or at its next check-in, within the hour) and shows the notice to its staff from the time chosen.';
+        if ($s('email_admins') === '1') {
+            // Saved and committed above: now email each business's administrators the matching draft (same path as the compose screen).
+            $draft = $action === 'now' ? 'starting' : 'advance';
+            $d = maint_mail_draft($pdo, $draft);
+            foreach ($newIds as $wid) {
+                $res = maint_mail_send($pdo, $wid, $draft, $d['subject'], $d['body'], null, $me, time(), $tz, false);
+                $info .= ' Email to the administrators of ' . ($res['hotel'] !== '' ? $res['hotel'] : 'window ' . $wid) . ': '
+                    . ($res['error'] !== '' ? $res['error'] : maint_mail_result_words($res));
+            }
+        }
+        flash_set('info', $info);
         maint_back_and_nudge($pdo, $back, $ids);
     }
     if (in_array($action, ['end', 'cancel', 'generic'], true)) {
@@ -104,6 +115,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'generic' => 'This window now uses the generic message. The business gets it at its next check-in (asked now).'];
         flash_set('info', $done[$action]);
         maint_back_and_nudge($pdo, $back, [$tid]);
+    }
+    if ($action === 'email_send') {
+        $id = ctype_digit($s('id')) ? (int)$s('id') : 0;
+        $draft = $s('draft');
+        $people = isset($_POST['people']) && is_array($_POST['people']) ? array_values(array_filter($_POST['people'], 'is_string')) : [];
+        $res = maint_mail_send($pdo, $id, $draft, $s('subject'), $s('body'), $people, $me, $now, $tz, $s('again') === '1');
+        if ($res['error'] !== '') {
+            $_SESSION['maint_mail_form'] = ['id' => $id, 'draft' => $draft, 'subject' => $s('subject'), 'body' => $s('body'), 'people' => $people];
+            flash_set('error', $res['error']);
+            header('Location: maintenance.php?email=' . $id . '&draft=' . rawurlencode($draft));
+            exit;
+        }
+        flash_set($res['failed'] > 0 ? 'error' : 'info', 'Email about the window for ' . $res['hotel'] . ': ' . maint_mail_result_words($res));
+        header('Location: ' . $back);
+        exit;
+    }
+    if ($action === 'draft_save' || $action === 'draft_revert') {
+        $key = $s('draft');
+        $e1 = maint_mail_save_draft($pdo, $key, $action === 'draft_revert' ? null : $s('subject'), $action === 'draft_revert' ? null : $s('body'), $me);
+        $anchor = '#draft-' . (isset(maint_mail_drafts()[$key]) ? $key : 'list');
+        flash_set($e1 !== '' ? 'error' : 'info', $e1 !== '' ? $e1 : ($action === 'draft_revert' ? 'The draft is back to the built-in text.' : 'Draft saved.'));
+        header('Location: ' . $back . $anchor);
+        exit;
     }
     if ($action === 'save_default' || $action === 'revert_default') {
         $e1 = maint_save_default_message($pdo, $action === 'revert_default' ? null : $s('default_message'), $me);
@@ -169,6 +203,7 @@ $total = count($rows);
 $pages = $per > 0 ? max(1, (int)ceil($total / $per)) : 1;
 $page = min($page, $pages);
 $shown = $per > 0 ? array_slice($rows, ($page - 1) * $per, $per) : $rows;
+$emailed = $ready && $shown ? maint_mail_sent_summary($pdo, array_column($shown, 'tenant_id')) : [];
 $link = static function (array $over) use ($view, $fTenant, $perIn, $page): string {
     $q = array_merge(['view' => $view, 'tenant' => $fTenant ?: null, 'per' => $perIn !== '10' ? $perIn : null, 'page' => $page > 1 ? $page : null], $over);
     $q = array_filter($q, static fn($v) => $v !== null && $v !== '');
@@ -184,6 +219,69 @@ echo view_page_head('Maintenance');
 view_flash();
 if (!$ready): ?>
 <p class="flash flash-error">Maintenance is not set up on this panel yet. Apply migration 014 (<code>php scripts/migrate.php</code>) and reload this page.</p>
+<?php view_foot(); exit; endif;
+
+// ── Email the business's administrators about one window (?email=ID) ───────
+if (isset($_GET['email'])):
+    $mid = ctype_digit((string)$_GET['email']) ? (int)$_GET['email'] : 0;
+    [$merr, $mw, $mt, $mstaff, $mcands] = maint_mail_context($pdo, $mid, $now);
+    $mform = is_array($_SESSION['maint_mail_form'] ?? null) && (int)($_SESSION['maint_mail_form']['id'] ?? 0) === $mid ? $_SESSION['maint_mail_form'] : null;
+    unset($_SESSION['maint_mail_form']);
+    $drafts = maint_mail_drafts();
+    $mdraft = (string)($_GET['draft'] ?? '');
+    if (!isset($drafts[$mdraft])) {
+        $mdraft = $mw !== null ? maint_mail_default_draft(maint_state($mw, $now)) : 'advance';
+    }
+    ?>
+<p><a href="maintenance.php">Back to Maintenance</a></p>
+<?php if ($merr !== ''): ?>
+    <p class="flash flash-error"><?= e($merr) ?></p>
+<?php else:
+    $mstate = maint_state($mw, $now);
+    $filled = maint_mail_filled($pdo, $mw, $mt, $mdraft, $tz);
+    $msubject = $mform !== null && (string)($mform['draft'] ?? '') === $mdraft ? (string)$mform['subject'] : $filled['subject'];
+    $mbody = $mform !== null && (string)($mform['draft'] ?? '') === $mdraft ? (string)$mform['body'] : $filled['body'];
+    $mpicked = $mform !== null ? array_map('intval', (array)($mform['people'] ?? [])) : null;
+    $hasAdmin = (bool)array_filter($mcands, static fn($c) => $c['is_admin']); ?>
+<h2>Email about the window for <?= e($mt['name']) ?></h2>
+<div class="card">
+    <p><span class="pill pill-<?= e($pillFor[$mstate] ?? 'grace') ?>"><?= e(maint_state_words()[$mstate] ?? $mstate) ?></span>
+        <?= e($scopeShort[$mw['scope']] ?? $mw['scope']) ?>, <?= $when($mw['starts_at']) ?> to <?= $when($mw['ends_at']) ?> (<?= e($tz) ?>).</p>
+    <?php if (!$mcands || !$hasAdmin): ?>
+        <p class="flash flash-error"><?= e(maint_mail_none_reason((string)$mt['name'], $mstaff)) ?></p>
+    <?php endif; ?>
+    <form method="get" action="maintenance.php" class="inline">
+        <input type="hidden" name="email" value="<?= (int)$mid ?>">
+        <label>Draft<?= $help('Each draft fills in this window\'s business, date, times, what goes offline and message. Edit the drafts at the bottom of the Maintenance page.') ?>
+            <select name="draft">
+                <?php foreach ($drafts as $k => $d): ?>
+                    <option value="<?= e($k) ?>"<?= $mdraft === $k ? ' selected' : '' ?>><?= e($d['label']) ?></option>
+                <?php endforeach; ?>
+            </select></label>
+        <button type="submit" class="secondary">Use this draft</button>
+    </form>
+</div>
+<?php if ($mcands): ?>
+<form method="post" action="maintenance.php" class="card" autocomplete="off" data-confirm="Send this email now, one to each person ticked?">
+    <?= csrf_field() ?>
+    <input type="hidden" name="action" value="email_send">
+    <input type="hidden" name="id" value="<?= (int)$mid ?>">
+    <input type="hidden" name="draft" value="<?= e($mdraft) ?>">
+    <fieldset><legend>Send to<?= $help('Active staff of this business that have an email in their own system (from its last staff list). Administrators are ticked; tick others only when they need to know. At most ' . MAINT_MAIL_CAP . ' people; each gets their own email.') ?></legend>
+        <?php foreach ($mcands as $c): ?>
+            <label class="check"><input type="checkbox" name="people[]" value="<?= (int)$c['pms_user_id'] ?>"<?= ($mpicked === null ? $c['is_admin'] : in_array($c['pms_user_id'], $mpicked, true)) ? ' checked' : '' ?>>
+                <?= e($c['name']) ?> <span class="tag"><?= e($c['is_admin'] ? 'Administrator' : ($c['role'] !== '' ? $c['role'] : 'Staff')) ?></span> <span class="muted"><?= e($c['email']) ?></span></label>
+        <?php endforeach; ?>
+    </fieldset>
+    <label>Subject <input type="text" name="subject" required maxlength="<?= (int)MAINT_MAIL_SUBJECT_MAX ?>" value="<?= e($msubject) ?>"></label>
+    <label>Message <small class="muted">(plain text; a blank line starts a new paragraph; your company details and signature are added below it)</small>
+        <textarea name="body" rows="12" required maxlength="<?= (int)MAINT_MAIL_BODY_MAX ?>"><?= e($mbody) ?></textarea></label>
+    <label class="check"><input type="checkbox" name="again" value="1"> Send it again<?= $help('Only needed when this same draft was sent about this window less than a minute ago: it stops a double click sending everything twice.') ?></label>
+    <button type="submit">Send</button>
+</form>
+<?php endif; ?>
+<?php endif; ?>
+<script src="assets/billing.js" defer></script>
 <?php view_foot(); exit; endif; ?>
 <div class="card">
     <p>Take a business's system offline for planned work. Its staff see a notice ahead of time with the date, the times and the message. During the window the part you choose is offline, and it comes back on by itself when the window ends, even if it cannot reach this panel. <strong>End now</strong> brings it back early.</p>
@@ -224,6 +322,7 @@ $fvSched = static fn(string $k, string $d = ''): string => $wasNow ? $d : $fv($k
         </select></label>
     <label>Message <small class="muted">(leave empty to use the generic message below; plain text, up to <?= (int)MAINT_MESSAGE_MAX ?> characters)</small>
         <textarea name="message" rows="3" maxlength="<?= (int)MAINT_MESSAGE_MAX ?>" placeholder="<?= e($defaultMsg) ?>"><?= e($fvNow('message')) ?></textarea></label>
+    <label class="check"><input type="checkbox" name="email_admins" value="1"<?= $fvNow('email_admins') === '1' ? ' checked' : '' ?>> Email the business's administrators now<?= $help('After saving, sends the "Starting now" draft (Email drafts, below) to each business\'s active administrators that have an email in their own system.') ?></label>
     <button type="submit">Go offline now</button>
 </form>
 
@@ -253,6 +352,7 @@ $fvSched = static fn(string $k, string $d = ''): string => $wasNow ? $d : $fv($k
         </select></label>
     <label>Message <small class="muted">(leave empty to use the generic message below; plain text, up to <?= (int)MAINT_MESSAGE_MAX ?> characters)</small>
         <textarea name="message" rows="3" maxlength="<?= (int)MAINT_MESSAGE_MAX ?>" placeholder="<?= e($defaultMsg) ?>"><?= e($fvSched('message')) ?></textarea></label>
+    <label class="check"><input type="checkbox" name="email_admins" value="1"<?= $fvSched('email_admins') === '1' ? ' checked' : '' ?>> Email the business's administrators now<?= $help('After saving, sends the "Advance notice" draft (Email drafts, below) to each business\'s active administrators that have an email in their own system.') ?></label>
     <button type="submit">Schedule</button>
 </form>
 
@@ -289,7 +389,8 @@ $fvSched = static fn(string $k, string $d = ''): string => $wasNow ? $d : $fv($k
     <?= view_th('Message', 'The words staff (and guests, for the website) see. "Generic" = the generic message below at the time it is sent.', 'Shown to staff') ?>
     <?= view_th('Sent', 'When this window first went out to the business in its licence answer.', 'In its answer') ?>
     <?= view_th('Seen by the hotel', 'When the business first told this panel it holds this window (at the check-in after it was sent, so up to an hour later).', 'Confirmed at') ?>
-    <?= view_th('', 'End now brings a running window to an end. Cancel calls off one that has not started.', 'Actions') ?>
+    <?= view_th('Emailed', 'When an email about this window last went to the business\'s staff from this page, and how many emails went in all (every draft, test-mode sends included).', 'To its staff') ?>
+    <?= view_th('', 'End now brings a running window to an end. Cancel calls off one that has not started. Email admins writes to the business\'s administrators (upcoming, running, or ended in the last 7 days).', 'Actions') ?>
 </tr></thead><tbody>
 <?php foreach ($shown as $r):
     $state = $r['view_state'];
@@ -307,6 +408,7 @@ $fvSched = static fn(string $k, string $d = ''): string => $wasNow ? $d : $fv($k
         <td data-label="Message"><?= $r['message'] === null ? '<span class="tag">Generic</span>' : view_trunc($r['message']) ?></td>
         <td data-label="Sent" class="nw"><?= $r['sent_at'] !== null ? $when($r['sent_at']) : 'Not yet' ?></td>
         <td data-label="Seen by the hotel" class="nw"><?= $r['hotel_seen_at'] !== null ? $when($r['hotel_seen_at']) : 'Not yet' ?></td>
+        <td data-label="Emailed" class="nw"><?= isset($emailed[(int)$r['id']]) ? e(date('D j M Y, H:i', (int)strtotime($emailed[(int)$r['id']]['last']))) . ' (' . (int)$emailed[(int)$r['id']]['n'] . ')' : 'Not yet' ?></td>
         <td data-label="Actions">
             <?php if ($state === 'offline') {
                 echo $btn('end', 'End now', 'End this window now? The business comes back online at its next check-in (asked now).');
@@ -316,7 +418,11 @@ $fvSched = static fn(string $k, string $d = ''): string => $wasNow ? $d : $fv($k
             if (in_array($state, ['upcoming', 'announced', 'offline'], true) && $r['message'] !== null) {
                 echo $btn('generic', 'Use the generic message', 'Replace this window\'s own message with the generic message?');
             }
-            if (!in_array($state, ['upcoming', 'announced', 'offline'], true)) {
+            $canMail = maint_mail_can_email($r, $now) === '';
+            if ($canMail) {
+                echo '<a href="maintenance.php?email=' . (int)$r['id'] . '">Email admins</a>';
+            }
+            if (!$canMail && !in_array($state, ['upcoming', 'announced', 'offline'], true)) {
                 echo view_empty();
             } ?>
         </td>
@@ -350,6 +456,33 @@ $fvSched = static fn(string $k, string $d = ''): string => $wasNow ? $d : $fv($k
     </form>
     <?php endif; ?>
 </div>
+
+<h2 id="draft-list">Email drafts<?= $help('The ready-made emails for "Email admins" and for "Email the business\'s administrators now". The words in braces are filled in from the window when the email is written.') ?></h2>
+<div class="card">
+    <p class="muted">Filled in from the window: <?php $ph = []; foreach (maint_mail_placeholders() as $k => $w) { $ph[] = '<code>' . e($k) . '</code> ' . e($w); } echo implode('; ', $ph); ?>. Plain text only; a blank line starts a new paragraph.</p>
+</div>
+<?php foreach (maint_mail_drafts() as $dk => $bd):
+    $cur = maint_mail_draft($pdo, $dk); ?>
+<div class="card" id="draft-<?= e($dk) ?>">
+    <h3><?= e($bd['label']) ?> <span class="tag"><?= $cur['custom'] ? 'Your own words' : 'Built-in' ?></span></h3>
+    <form method="post" action="maintenance.php">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="draft_save">
+        <input type="hidden" name="draft" value="<?= e($dk) ?>">
+        <label>Subject <input type="text" name="subject" required maxlength="<?= (int)MAINT_MAIL_SUBJECT_MAX ?>" value="<?= e($cur['subject']) ?>"></label>
+        <label>Message <textarea name="body" rows="8" required maxlength="<?= (int)MAINT_MAIL_BODY_MAX ?>"><?= e($cur['body']) ?></textarea></label>
+        <button type="submit">Save this draft</button>
+    </form>
+    <?php if ($cur['custom']): ?>
+    <form method="post" action="maintenance.php" class="spaced" data-confirm="Go back to the built-in words for this draft?">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="draft_revert">
+        <input type="hidden" name="draft" value="<?= e($dk) ?>">
+        <button type="submit" class="secondary">Revert to the built-in draft</button>
+    </form>
+    <?php endif; ?>
+</div>
+<?php endforeach; ?>
 <script src="assets/billing.js" defer></script>
 <?php
 view_foot();

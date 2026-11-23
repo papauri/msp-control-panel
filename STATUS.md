@@ -106,10 +106,11 @@ the window; (2) double-check the backup logic; (3) see every push to git (commit
   (9) 2026-11-24 modern look (owner approved the mockup): new app.css + grouped sidebar shell + view_page_head on 23
   pages, layout only, `c368327`. Not yet seen on the live server: owner pulls, then sends screenshots of anything off.
   Not approved/not built: Businesses search/tabs/Owed column, year-less maintenance dates.
-  (10) PAUSED by owner 2026-11-24, half built, UNCOMMITTED: email a business's administrators about a maintenance window
-  with 6 editable drafts (advance notice, reminder, starting now, times changed, back online, problem). Files: new
-  app/maint_mail.php, app/bootstrap.php, public/maintenance.php, public/guide.php, scripts/tests/maintenance_test.php.
-  Builder stopped mid-way (was adding tests): not run, not reviewed. Resume: finish + test + reviewer-critical, or discard.
+  (10) 2026-11-24 maintenance emails to a business's administrators: 6 editable drafts (advance notice, reminder, starting
+  now, times changed, back online, problem), compose per window, optional tick on Schedule / Offline now, Emailed column.
+  Recipients only that tenant's active synced staff; MAIL_TEST_TO honoured. Not yet seen live (no real send tested).
+  LATER: '<' in a business name or >4000 chars refuses to send; Offline now + email nudges after all sends; a send
+  exception after commit gives a 500 and skips the nudge; Send again re-sends to everyone.
 - LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
   min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only
   by the nudge (else up to ~1 h); admins cannot open the Licence page during an admin window.

@@ -134,6 +134,104 @@ t_ok('migration 014: no ";" inside a statement (migrate.php splits on it)', (sta
     return count(array_filter(array_map('trim', explode(';', $sql)))) === 1;
 })((string)file_get_contents($root . '/migrations/014_maintenance.sql')));
 
+// --- emailing the administrators (app/maint_mail.php, owner 2026-11-24): pure parts only, nothing is sent
+require_once __DIR__ . '/../../app/hms.php';
+require_once __DIR__ . '/../../app/email_templates.php';
+require_once __DIR__ . '/../../app/maint_mail.php';
+t_eq('mail: six drafts in page order', ['advance', 'reminder', 'starting', 'changed', 'back_online', 'problem'], array_keys(maint_mail_drafts()));
+foreach (maint_mail_drafts() as $k => $d) {
+    t_eq("mail: built-in draft $k passes its own check", '', maint_mail_check($d['subject'], $d['body']));
+    t_ok("mail: built-in draft $k uses no unknown placeholder", (static function (string $s): bool {
+        preg_match_all('/\{[^}]*\}/', $s, $m);
+        return !array_diff($m[0], array_keys(maint_mail_placeholders()));
+    })($d['subject'] . $d['body']));
+    t_ok("mail: built-in draft $k has no AI words", !preg_match('/\b(AI|smart|insight|powered by)\b/i', $d['subject'] . $d['body']));
+}
+foreach (['upcoming' => 'advance', 'announced' => 'advance', 'offline' => 'starting', 'ended' => 'back_online', 'cancelled' => 'changed', 'junk' => 'changed'] as $st => $want) {
+    t_eq("mail: default draft for $st", $want, maint_mail_default_draft($st));
+}
+// placeholders, filled in Africa/Blantyre (UTC+2): 2026-11-25 12:00 UTC = 14:00 there
+$co = em_company(['emails' => ['help@example.com', 'sales@example.com'], 'phone' => '+265 1 234']);
+$win = ['id' => 7, 'scope' => 'both', 'announce_from' => 1795000000, 'starts_at' => 1795608000, 'ends_at' => 1795608000 + 2 * $H, 'state' => 'planned', 'message' => null];
+$v = maint_mail_vars($win, 'Lake Hotel', 'Generic words.', $co, 'Africa/Blantyre');
+t_eq('mail: {date} in the panel time zone', 'Wednesday 25 November 2026', $v['{date}']);
+t_eq('mail: {from}', '14:00', $v['{from}']);
+t_eq('mail: {to} on the same day is the time only', '16:00', $v['{to}']);
+t_eq('mail: {zone}', 'CAT', $v['{zone}']);
+t_eq('mail: {contact} = first email + phone', 'help@example.com or +265 1 234', $v['{contact}']);
+t_ok('mail: {what goes offline} for both', strpos($v['{what goes offline}'], 'guest website') !== false && strpos($v['{what goes offline}'], 'staff system') !== false);
+$v2 =maint_mail_vars(array_merge($win, ['starts_at' => 1795608000 + 9 * $H, 'ends_at' => 1795608000 + 13 * $H]), 'X', 'm', $co, 'Africa/Blantyre');
+t_eq('mail: a window across midnight: {from} 23:00', '23:00', $v2['{from}']);
+t_eq('mail: a window across midnight: {to} carries the date', 'Thursday 26 November 2026, 03:00', $v2['{to}']);
+t_eq('mail: a zone without letters reads as UTC+hh:mm', 'UTC+03:00', maint_mail_vars($win, 'X', 'm', $co, 'Etc/GMT-3')['{zone}']);
+t_eq('mail: no company email or phone', 'the usual address', maint_mail_contact(['emails' => [], 'phone' => '']));
+t_eq('mail: fill', 'Lake Hotel on Wednesday 25 November 2026 at 14:00', maint_mail_fill('{hotel} on {date} at {from}', $v));
+t_eq('mail: a placeholder inside a value is never filled again', '{message} x', maint_mail_fill('{hotel} x', array_merge($v, ['{hotel}' => '{message}'])));
+t_eq('mail: unknown braces left alone', '{nope} Lake Hotel', maint_mail_fill('{nope} {hotel}', $v));
+// hostile hotel name and message: escaped in the HTML, kept as typed in the plain text
+$evil = maint_mail_vars($win, '<script>alert(1)</script> & "Inn"', "<img src=x onerror=alert(2)>\nLine two", $co, 'Africa/Blantyre');
+$d = maint_mail_drafts()['advance'];
+$mail = maint_mail_build($d['title'], maint_mail_fill($d['subject'], $evil), maint_mail_fill($d['body'], $evil), $co);
+t_ok('mail: HTML has no raw <script> from the name', stripos($mail['html'], '<script>') === false && strpos($mail['html'], '&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;Inn&quot;') !== false);
+t_ok('mail: HTML has no raw <img> from the message', stripos($mail['html'], '<img src=x') === false && strpos($mail['html'], '&lt;img src=x onerror=alert(2)&gt;<br>Line two') !== false);
+t_ok('mail: the plain text keeps the words as typed', strpos($mail['text'], '<img src=x onerror=alert(2)>') !== false && strpos($mail['text'], 'Hello,') !== false);
+t_ok('mail: the subject is one line', strpos(maint_mail_build('T', "A\r\nBcc: x@y.z", 'b', $co)['subject'], "\n") === false);
+t_ok('mail: the layout says a plain thank you (not "your business")', strpos($mail['html'], '<strong>Thank you.</strong>') !== false && strpos($mail['html'], 'Thank you for your business') === false);
+t_eq('mail: HTML in a draft is refused', 'Write the subject and message as plain text (no HTML).', maint_mail_check('Hi', 'a <b>bold</b> move'));
+t_ok('mail: an empty subject is refused', maint_mail_check('', 'body') !== '');
+t_ok('mail: an over-long message is refused', maint_mail_check('s', str_repeat('a', MAINT_MAIL_BODY_MAX + 1)) !== '');
+t_eq('mail: paragraphs split on blank lines, empty ones dropped', ['a', "b\nc"], maint_mail_paras("a\n\n\n  \nb\nc\n\n"));
+// who is an administrator, and who can be emailed
+$cat = ['roles' => ['admin' => ['label' => 'Administrator', 'level' => 100, 'defaults' => null], 'manager' => ['label' => 'Manager', 'level' => 50, 'defaults' => ['x']],
+    'clerk' => ['label' => 'Front desk', 'level' => 10, 'defaults' => []]], 'permissions' => ['x' => ['label' => 'X', 'category' => 'C']]];
+$staffRow = static fn(int $id, string $role, string $email, int $active = 1, int $super = 0, string $name = ''): array =>
+    ['pms_user_id' => $id, 'username' => 'u' . $id, 'full_name' => $name !== '' ? $name : 'Person ' . $id, 'email' => $email, 'role' => $role, 'is_active' => $active, 'is_super_admin' => $super, 'denies' => [], 'grants' => []];
+$staff = [
+    $staffRow(1, 'clerk', 'desk@hotel.test', 1, 0, 'Ann Desk'),
+    $staffRow(2, 'manager', 'boss@hotel.test', 1, 1, 'Ben Super'),      // super admin with a limited role
+    $staffRow(3, 'admin', 'admin@hotel.test', 1, 0, 'Cat Admin'),       // all-permission role
+    $staffRow(4, 'admin', 'gone@hotel.test', 0, 0, 'Dan Inactive'),     // inactive
+    $staffRow(5, 'admin', '', 1, 0, 'Eve No Email'),                    // no email
+    $staffRow(6, 'admin', "bad\r\nBcc: x@y.z", 1, 0, 'Fay Bad'),        // header injection attempt
+    $staffRow(7, 'admin', 'not-an-email', 1, 0, 'Gus Junk'),
+    $staffRow(8, 'clerk', 'ADMIN@hotel.test', 1, 0, 'Hal Same'),        // same address as Cat, another case
+];
+$cands = maint_mail_candidates($staff, $cat);
+t_eq('mail: candidates = active staff with a valid email, one per address, admins first', [2, 3, 1], array_column($cands, 'pms_user_id'));
+t_eq('mail: admin flags', [true, true, false], array_column($cands, 'is_admin'));
+t_eq('mail: the super admin is labelled', 'Super admin', $cands[0]['role']);
+[$e1, $admins] = maint_mail_choose($cands, null);
+t_eq('mail: administrators by default (super admin + all-permission role)', ['', ['boss@hotel.test', 'admin@hotel.test']], [$e1, array_column($admins, 'email')]);
+t_eq('mail: with no catalog only the super admin counts', [true, false, false], array_column(maint_mail_candidates($staff, null), 'is_admin'));
+[$e1, $pick] = maint_mail_choose($cands, ['1', '4', '5', '999', 'x', '3']);
+t_eq('mail: only ticked ids that are candidates (inactive / no email / unknown dropped)', ['', [3, 1]], [$e1, array_column($pick, 'pms_user_id')]);
+t_ok('mail: nothing ticked is refused', maint_mail_choose($cands, [])[0] !== '');
+t_ok('mail: only unknown ids ticked is refused', maint_mail_choose($cands, ['999'])[0] !== '');
+$many = [];
+for ($i = 1; $i <= 51; $i++) {
+    $many[] = $staffRow($i, 'admin', "a$i@hotel.test");
+}
+$cm = maint_mail_candidates($many, $cat);
+t_eq('mail: 50 people allowed', 50, count(maint_mail_choose($cm, array_map('strval', range(1, 50)))[1]));
+t_ok('mail: 51 people refused, nothing chosen', maint_mail_choose($cm, array_map('strval', range(1, 51))) [0] !== '' && maint_mail_choose($cm, array_map('strval', range(1, 51)))[1] === []);
+t_ok('mail: 51 administrators by default refused too', maint_mail_choose($cm, null)[0] !== '');
+t_ok('mail: no staff list => plain words', strpos(maint_mail_none_reason('Lake Hotel', []), 'No administrator email known for Lake Hotel') === 0);
+t_eq('mail: no admin with an email', 'No administrator email known for Lake Hotel: ask them to open their Licence page, or add an email to their admin account.', maint_mail_none_reason('Lake Hotel', $staff));
+// which windows can be emailed about
+t_eq('mail: upcoming window', '', maint_mail_can_email($win, 1795000000));
+t_eq('mail: running window', '', maint_mail_can_email($win, 1795608000 + $H));
+t_ok('mail: cancelled window refused', maint_mail_can_email(array_merge($win, ['state' => 'cancelled']), $now) !== '');
+$endedRecent = array_merge($win, ['state' => 'ended', 'starts_at' => $now - 10 * 86400, 'ends_at' => $now - 7 * 86400]);
+t_eq('mail: ended exactly 7 days ago still allowed', '', maint_mail_can_email($endedRecent, $now));
+t_ok('mail: ended 7 days and a second ago refused', maint_mail_can_email(array_merge($endedRecent, ['ends_at' => $now - 7 * 86400 - 1]), $now) !== '');
+t_eq('mail: tag round trip', 12, maint_mail_tag_id(maint_mail_tag(12, 'back_online')));
+t_eq('mail: a foreign attachment name is not a window', 0, maint_mail_tag_id('invoice-12.pdf'));
+t_eq('mail: result words', 'Sent to 2, failed 1 (c@d.test: refused).', maint_mail_result_words(['sent' => 2, 'failed' => 1, 'reasons' => ['c@d.test: refused'], 'test' => false]));
+$mailSrc = (string)file_get_contents($root . '/app/maint_mail.php');
+t_ok('mail: one email per person through mail_send', (bool)preg_match("/foreach \(\\\$people as \\\$p\) \{\s*\\\$m = mail_send\(\['to' => \[\\\$p\['email'\]\]/", $mailSrc));
+t_ok('mail: the page sends only by pms_user_id (no address field)', strpos($pageSrc, 'name="people[]" value="<?= (int)$c[\'pms_user_id\'] ?>"') !== false && strpos($pageSrc, 'type="email"') === false);
+t_ok('bootstrap loads maint_mail.php', strpos((string)file_get_contents($root . '/app/bootstrap.php'), "require_once __DIR__ . '/maint_mail.php';") !== false);
+
 if (in_array('--db', $argv, true)) {
     require __DIR__ . '/../../app/bootstrap.php';
     $pdo = db();

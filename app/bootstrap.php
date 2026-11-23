@@ -42,6 +42,7 @@ require_once __DIR__ . '/automation.php';
 require_once __DIR__ . '/hms.php';
 require_once __DIR__ . '/ai.php';
 require_once __DIR__ . '/maintenance.php';
+require_once __DIR__ . '/maint_mail.php';
 require_once __DIR__ . '/deploy.php';
 require_once __DIR__ . '/view.php';
 
