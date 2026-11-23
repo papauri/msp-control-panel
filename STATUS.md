@@ -88,7 +88,8 @@ the window; (2) double-check the backup logic; (3) see every push to git (commit
   and Rosalyn's (`/home/p601229/rosalyns_hotel`) with `/usr/local/bin/php`; `--want` tested from cron = exit 1.
   GitHub token saved; both live copies added and report their commit (up to date). First Liwonde request 11:49
   waiting on its run. Panel cron not added yet. Owner 2026-11-23: Update from Remote is one click, no password or code
-  (signed-in + CSRF + audit log; it can only pull what is on GitHub). LATER: guide section 18 / spec / deploy-check
+  (signed-in + CSRF + audit log; it can only pull what is on GitHub), and nudges the hotel to check in straight
+  away (`tenant_nudge`; the hotel ignores a nudge within 60 s of its last check, then the request waits for the next one). LATER: guide section 18 / spec / deploy-check
   comments still show plain `php`.
 - LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
   min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only
