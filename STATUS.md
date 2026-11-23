@@ -100,6 +100,9 @@ the window; (2) double-check the backup logic; (3) see every push to git (commit
   comments still show plain `php`.
   (7) 2026-11-24: cron may run every minute (a running pull is waited for: Liwonde `797c01b`, Rosalyn's `6bcc01b`, panel
   `2fb9888`). Maintenance "Offline now" for N minutes/hours (`a382467`). Not yet seen on the live server.
+  (8) 2026-11-24 UI pass 1 (owner: simple, compact, uniform): app.css only, `d472c92`. Pass 2 = page by page from the
+  owner's screenshots; known: numeric th left over right-aligned .num (view_th needs a class), h1/flash order differs,
+  audit.php has no 10/25/50/All picker, index.php and clients.php do not paginate.
 - LATER (reviews): Deployments asks GitHub once per live copy on each page load (no failure cache); a uapi run over 5
   min can be read half-written; the cron line fixes `branch=main`; maintenance in a site-only window ends early only
   by the nudge (else up to ~1 h); admins cannot open the Licence page during an admin window.
